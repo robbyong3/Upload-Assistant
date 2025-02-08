@@ -96,7 +96,7 @@ class Args():
         parser.add_argument('-qbt', '--qbit-tag', dest='qbit_tag', nargs='*', required=False, help="Add to qbit with this tag")
         parser.add_argument('-qbc', '--qbit-cat', dest='qbit_cat', nargs='*', required=False, help="Add to qbit with this category")
         parser.add_argument('-rtl', '--rtorrent-label', dest='rtorrent_label', nargs='*', required=False, help="Add to rtorrent with this label")
-        parser.add_argument('-tk', '--trackers', action='append', required=False, help="Upload to these trackers, space separated (--trackers blu bhd)")
+        parser.add_argument('-tk', '--trackers', nargs="+", required=False, help="Upload to these trackers, space separated (--trackers blu bhd)")
         parser.add_argument('-rt', '--randomized', nargs='*', required=False, help="Number of extra, torrents with random infohash", default=0)
         parser.add_argument('-ua', '--unattended', action='store_true', required=False, help=argparse.SUPPRESS)
         parser.add_argument('-uac', '--unattended-confirm', action='store_true', required=False, help=argparse.SUPPRESS)
