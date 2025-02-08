@@ -12,7 +12,7 @@ import shutil
 import cli_ui
 import traceback
 import time
-
+import re
 from src.trackersetup import tracker_class_map, api_trackers, other_api_trackers, http_trackers
 from src.trackerhandle import process_trackers
 from src.queuemanage import handle_queue
@@ -100,14 +100,108 @@ async def process_meta(meta, base_dir):
         f.close()
     confirm = await helper.get_confirmation(meta)
     while confirm is False:
-        editargs = cli_ui.ask_string("Input args that need correction e.g. (--tag NTb --category tv --tmdb 12345)")
-        editargs = (meta['path'],) + tuple(editargs.split())
-        if meta.get('debug', False):
-            editargs += ("--debug",)
-        if meta.get('trackers', None) is not None:
-            editargs += ("--trackers", ', '.join(meta['trackers']))
-        meta, help, before_args = parser.parse(editargs, meta)
         meta['edit'] = True
+
+        # Load previously saved arguments
+        saved_args = {}
+        if os.path.exists("user_args.json"):
+            with open("user_args.json", "r", encoding="utf-8") as f:
+                saved_args = json.load(f)
+
+        editargs_input = cli_ui.ask_string("Input args that need correction e.g. (--tag NTb --category tv --tmdb 12345)")
+        editargs_list = editargs_input.split()
+        user_overrides = {}
+        i = 0
+
+        while i < len(editargs_list):
+            if editargs_list[i].startswith("-"):  # Argument detected
+                key = editargs_list[i]  # Keep full argument name
+                value = []
+                i += 1  # Move past the argument name
+
+                # Capture everything until the next argument that starts with '-'
+                while i < len(editargs_list) and not editargs_list[i].startswith("-"):
+                    value.append(editargs_list[i])
+                    i += 1
+
+                # Store argument: list if multiple, string if single value
+                user_overrides[key] = value if len(value) > 1 else value[0]
+            else:
+                i += 1  # Skip unexpected standalone values
+
+        # Merge saved arguments into editargs (respecting user overrides)
+        editargs = [meta['path']]
+        for key, value in saved_args.items():
+            if key in user_overrides:
+                continue
+
+            if isinstance(value, list):  # Convert lists to space-separated strings
+                value = ' '.join(map(str, value))
+            elif isinstance(value, bool):  # Convert booleans to CLI flags
+                if value:
+                    editargs.append(f"--{key}")
+                continue
+
+            editargs.append(f"--{key}")
+            editargs.append(str(value))
+
+        if meta.get('debug', False):
+            editargs.append("--debug")
+
+        console.print("editargs before handling multi-value arguments:", editargs)
+
+        # **Handle Multi-Value Arguments Properly**
+        for arg_name in ["--trackers", "--tag"]:
+            if arg_name in user_overrides:
+                values = user_overrides[arg_name]
+
+                if isinstance(values, str):
+                    # Remove quotes and split by commas/spaces
+                    values = re.sub(r'^["\']|["\']$', '', values)
+                    values = re.split(r'[,\s]+', values.strip())
+                elif isinstance(values, list):
+                    values = [re.sub(r'^["\']|["\']$', '', v.strip()) for v in values]
+
+                # Ensure no trailing commas
+                values = [v.rstrip(",") for v in values if v]
+
+                # Remove old argument and its values before re-adding
+                cleaned_editargs = []
+                skip_next = False
+                for arg in editargs:
+                    if skip_next:
+                        skip_next = False
+                        continue
+                    if arg == arg_name:
+                        skip_next = True  # Skip the next value
+                        continue
+                    cleaned_editargs.append(arg)
+
+                # Add final cleaned argument
+                if arg_name == "--trackers":
+                    for tracker in values:
+                        cleaned_editargs.append(arg_name)
+                        cleaned_editargs.append(tracker)
+                else:
+                    cleaned_editargs += [arg_name, " ".join(values)]
+
+                # Ensure trackers are stored as a correct list in `meta`
+                if arg_name == "--trackers":
+                    meta["trackers"] = list(values)  # Correct overwrite as a list
+
+                editargs = cleaned_editargs
+
+        console.print("Final editargs after processing:", editargs)
+
+        # Convert editargs back to tuple format (if required)
+        editargs = tuple(editargs)
+
+        # Parse the updated arguments
+        meta, help, before_args = parser.parse(editargs, meta)
+
+        console.print("before_args:", before_args)
+
+        # Gather necessary prep data
         meta = await prep.gather_prep(meta=meta, mode='cli')
         meta['name_notag'], meta['name'], meta['clean_name'], meta['potential_missing'] = await prep.get_name(meta)
         confirm = await helper.get_confirmation(meta)
@@ -223,6 +317,7 @@ async def save_processed_file(log_file, file_path):
 
 
 async def do_the_thing(base_dir):
+    await asyncio.sleep(0.1)  # Ensure it's not racing
     meta = dict()
     paths = []
     for each in sys.argv[1:]:

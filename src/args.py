@@ -4,7 +4,7 @@ import urllib.parse
 import os
 import datetime
 import sys
-
+import json
 from src.console import console
 
 
@@ -96,7 +96,7 @@ class Args():
         parser.add_argument('-qbt', '--qbit-tag', dest='qbit_tag', nargs='*', required=False, help="Add to qbit with this tag")
         parser.add_argument('-qbc', '--qbit-cat', dest='qbit_cat', nargs='*', required=False, help="Add to qbit with this category")
         parser.add_argument('-rtl', '--rtorrent-label', dest='rtorrent_label', nargs='*', required=False, help="Add to rtorrent with this label")
-        parser.add_argument('-tk', '--trackers', nargs='*', required=False, help="Upload to these trackers, space seperated (--trackers blu bhd) including manual")
+        parser.add_argument('-tk', '--trackers', action='append', required=False, help="Upload to these trackers, space separated (--trackers blu bhd)")
         parser.add_argument('-rt', '--randomized', nargs='*', required=False, help="Number of extra, torrents with random infohash", default=0)
         parser.add_argument('-ua', '--unattended', action='store_true', required=False, help=argparse.SUPPRESS)
         parser.add_argument('-uac', '--unattended-confirm', action='store_true', required=False, help=argparse.SUPPRESS)
@@ -107,6 +107,10 @@ class Args():
         parser.add_argument('--infohash', nargs='*', required=False, help="V1 Info Hash")
         args, before_args = parser.parse_known_args(input)
         args = vars(args)
+        if "edit" not in meta and not meta.get('edit'):
+            user_args = {k: v for k, v in args.items() if v not in (None, [], '', 0)}
+            with open("user_args.json", "w", encoding="utf-8") as f:
+                json.dump(user_args, f, indent=4)
         # console.print(args)
         if meta.get('manual_frames') is not None:
             try:
@@ -270,8 +274,13 @@ class Args():
                 meta[key] = value
             else:
                 meta[key] = meta.get(key, None)
-            if key in ('trackers'):
-                meta[key] = value
+            if key == 'trackers':
+                if isinstance(value, list):
+                    meta[key] = [item for sublist in value for item in (sublist if isinstance(sublist, list) else [sublist])]
+                elif isinstance(value, str):
+                    meta[key] = value.split()
+                else:
+                    meta[key] = []
             # if key == 'help' and value == True:
                 # parser.print_help()
         return meta, parser, before_args
