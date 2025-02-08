@@ -148,8 +148,6 @@ async def process_meta(meta, base_dir):
         if meta.get('debug', False):
             editargs.append("--debug")
 
-        console.print("editargs before handling multi-value arguments:", editargs)
-
         # **Handle Multi-Value Arguments Properly**
         for arg_name in ["--trackers", "--tag"]:
             if arg_name in user_overrides:
@@ -191,15 +189,11 @@ async def process_meta(meta, base_dir):
 
                 editargs = cleaned_editargs
 
-        console.print("Final editargs after processing:", editargs)
-
         # Convert editargs back to tuple format (if required)
         editargs = tuple(editargs)
 
         # Parse the updated arguments
         meta, help, before_args = parser.parse(editargs, meta)
-
-        console.print("before_args:", before_args)
 
         # Gather necessary prep data
         meta = await prep.gather_prep(meta=meta, mode='cli')
