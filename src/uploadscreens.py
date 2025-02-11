@@ -22,11 +22,7 @@ def upload_image_task(args):
 
         if img_host == "imgbox":
             try:
-                # Call the asynchronous imgbox_upload function
-                loop = asyncio.get_event_loop()
-                image_list = loop.run_until_complete(
-                    imgbox_upload(os.getcwd(), [image], meta, return_dict={})
-                )
+                image_list = asyncio.run(imgbox_upload(os.getcwd(), [image], meta, return_dict={}))
                 if image_list and all(
                     'img_url' in img and 'raw_url' in img and 'web_url' in img for img in image_list
                 ):
@@ -342,8 +338,8 @@ def upload_screens(meta, screens, img_host_num, i, total_screens, custom_img_lis
         if meta['debug']:
             console.print("image globs (sorted):", image_glob)
 
-    existing_images = [img for img in meta['image_list'] if img.get('img_url') and img.get('web_url')]
-    existing_count = len(existing_images)
+        existing_images = [img for img in meta['image_list'] if img.get('img_url') and img.get('web_url')]
+        existing_count = len(existing_images)
 
     if not retry_mode:
         images_needed = max(0, total_screens - existing_count)
@@ -400,7 +396,7 @@ def upload_screens(meta, screens, img_host_num, i, total_screens, custom_img_lis
 
     successfully_uploaded = [(index, result) for index, result in results if result['status'] == 'success']
 
-    if len(successfully_uploaded) < meta.get('cutoff', 0) and not retry_mode and img_host == initial_img_host and not using_custom_img_list:
+    if len(successfully_uploaded) < meta.get('cutoff', 1) and not retry_mode and img_host == initial_img_host and not using_custom_img_list:
         img_host_num += 1
         if f'img_host_{img_host_num}' in config['DEFAULT']:
             meta['imghost'] = config['DEFAULT'][f'img_host_{img_host_num}']

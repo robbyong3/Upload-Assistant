@@ -202,7 +202,10 @@ async def process_meta(meta, base_dir):
 
     successful_trackers = await process_all_trackers(meta)
 
-    meta['skip_uploading'] = int(config['DEFAULT'].get('tracker_pass_checks', 1))
+    if meta.get('trackers_pass') is not None:
+        meta['skip_uploading'] = meta.get('trackers_pass')
+    else:
+        meta['skip_uploading'] = int(config['DEFAULT'].get('tracker_pass_checks', 1))
     if successful_trackers < meta['skip_uploading'] and not meta['debug']:
         console.print(f"[red]Not enough successful trackers ({successful_trackers}/{meta['skip_uploading']}). EXITING........[/red]")
 
@@ -210,7 +213,7 @@ async def process_meta(meta, base_dir):
         meta['we_are_uploading'] = True
         filename = meta.get('title', None)
         bdinfo = meta.get('bdinfo', None)
-        videopath = meta.get('video', None)
+        videopath = meta.get('filelist', [None])[0]
         console.print(f"Processing {filename} for upload")
         if 'manual_frames' not in meta:
             meta['manual_frames'] = {}
@@ -243,7 +246,7 @@ async def process_meta(meta, base_dir):
             except Exception as e:
                 print(f"Error during generic screenshot capture: {e}")
 
-        meta['cutoff'] = int(config['DEFAULT'].get('cutoff_screens', 0))
+        meta['cutoff'] = int(config['DEFAULT'].get('cutoff_screens', 1))
         if len(meta.get('image_list', [])) < meta.get('cutoff') and meta.get('skip_imghost_upload', False) is False:
             if 'image_list' not in meta:
                 meta['image_list'] = []
