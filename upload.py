@@ -12,7 +12,6 @@ import shutil
 import cli_ui
 import traceback
 import time
-import re
 from src.trackersetup import tracker_class_map, api_trackers, other_api_trackers, http_trackers
 from src.trackerhandle import process_trackers
 from src.queuemanage import handle_queue
@@ -131,69 +130,74 @@ async def process_meta(meta, base_dir):
 
         # Merge saved arguments into editargs (respecting user overrides)
         editargs = [meta['path']]
+        print(f"DEBUG: saved_args -> {saved_args}")
+
         for key, value in saved_args.items():
             if key in user_overrides:
-                continue
+                continue  # Skip because the user has overridden it
 
             if isinstance(value, list):  # Convert lists to space-separated strings
                 value = ' '.join(map(str, value))
             elif isinstance(value, bool):  # Convert booleans to CLI flags
                 if value:
-                    editargs.append(f"--{key}")
-                continue
+                    editargs.append(f"--{key}")  # Add flag if True
+                continue  # Skip further processing
 
             editargs.append(f"--{key}")
-            editargs.append(str(value))
+            editargs.append(str(value))  # Always ensure it's a string
+
+        # **Explicitly Remove Old `--manual_edition` Before Applying User Overrides**
+        # Needs better handling/handle all specific arg types******
+        cleaned_editargs = []
+        skip_next = False
+        for arg in editargs:
+            if skip_next:
+                skip_next = False
+                continue
+            if arg in ("--manual_edition", "--edition", "--repack"):
+                skip_next = True  # Skip the next value
+                continue
+            cleaned_editargs.append(arg)
+        editargs = cleaned_editargs  # Update editargs without the old value
+
+        # Apply user overrides last
+        for key, value in user_overrides.items():
+            normalized_key = key.lstrip('-')  # Remove leading dashes
+            normalized_key = f"--{normalized_key}"  # Ensure proper double-dash formatting
+
+            if isinstance(value, bool):
+                if value:
+                    editargs.append(normalized_key)
+                continue
+            elif isinstance(value, list):
+                editargs.append(normalized_key)
+                editargs.extend(map(str, value))  # Ensure list values are added properly
+            else:
+                editargs.append(normalized_key)
+                editargs.append(str(value))
+
+        # **Ensure --manual_edition is Correctly Added After Cleanup**
+        if "--edition" in user_overrides or "--manual_edition" in user_overrides:
+            new_value = user_overrides.get("--edition") or user_overrides.get("--manual_edition")
+            if isinstance(new_value, list):
+                new_value = " ".join(new_value)  # Convert list to space-separated string
+            editargs.append("--manual_edition")
+            editargs.append(str(new_value))  # Ensure correct format
 
         if meta.get('debug', False):
             editargs.append("--debug")
 
-        # **Handle Multi-Value Arguments Properly**
-        for arg_name in ["--trackers", "--tag"]:
-            if arg_name in user_overrides:
-                values = user_overrides[arg_name]
-
-                if isinstance(values, str):
-                    # Remove quotes and split by commas/spaces
-                    values = re.sub(r'^["\']|["\']$', '', values)
-                    values = re.split(r'[,\s]+', values.strip())
-                elif isinstance(values, list):
-                    values = [re.sub(r'^["\']|["\']$', '', v.strip()) for v in values]
-
-                # Ensure no trailing commas
-                values = [v.rstrip(",") for v in values if v]
-
-                # Remove old argument and its values before re-adding
-                cleaned_editargs = []
-                skip_next = False
-                for arg in editargs:
-                    if skip_next:
-                        skip_next = False
-                        continue
-                    if arg == arg_name:
-                        skip_next = True  # Skip the next value
-                        continue
-                    cleaned_editargs.append(arg)
-
-                # Add final cleaned argument
-                if arg_name == "--trackers":
-                    for tracker in values:
-                        cleaned_editargs.append(arg_name)
-                        cleaned_editargs.append(tracker)
-                else:
-                    cleaned_editargs += [arg_name, " ".join(values)]
-
-                # Ensure trackers are stored as a correct list in `meta`
-                if arg_name == "--trackers":
-                    meta["trackers"] = list(values)  # Correct overwrite as a list
-
-                editargs = cleaned_editargs
-
         # Convert editargs back to tuple format (if required)
         editargs = tuple(editargs)
 
+        print(f"DEBUG: Final editargs before parsing -> {editargs}")
+
         # Parse the updated arguments
         meta, help, before_args = parser.parse(editargs, meta)
+
+        # Ensure `meta['manual_edition']` is set correctly
+        if "--manual_edition" in user_overrides or "--edition" in user_overrides:
+            meta["manual_edition"] = user_overrides.get("--edition") or user_overrides.get("--manual_edition")
 
         # Gather necessary prep data
         meta = await prep.gather_prep(meta=meta, mode='cli')
@@ -240,8 +244,6 @@ async def process_meta(meta, base_dir):
 
         else:
             try:
-                if meta['debug']:
-                    console.print(f"videopath: {videopath}, filename: {filename}, meta: {meta['uuid']}, base_dir: {base_dir}, manual_frames: {manual_frames}")
                 await screenshots(
                     videopath, filename, meta['uuid'], base_dir, meta,
                     manual_frames=manual_frames  # Pass additional kwargs directly
