@@ -103,6 +103,7 @@ class HDT():
         return hdt_name
 
     async def upload(self, meta, disctype):
+        console.print("TVMAZE ID into HDT:", meta.get('tvmaze_id'))
         common = COMMON(config=self.config)
         await common.edit_torrent(meta, self.tracker, self.source_flag)
         await self.edit_desc(meta)
@@ -275,6 +276,7 @@ class HDT():
             if movie['tvdb_id'] != 0:
                 description += f" [URL=https://www.thetvdb.com/?id={str(movie['tvdb_id'])}&tab=series][img]{self.config['IMAGES']['tvdb_75']}[/img][/URL]"
             if movie['tvmaze_id'] != 0:
+                console.print("HDT setting TV Maze ID:", movie.get('tvmaze_id'))
                 description += f" [URL=https://www.tvmaze.com/shows/{str(movie['tvmaze_id'])}][img]{self.config['IMAGES']['tvmaze_75']}[/img][/URL]"
             if movie['mal_id'] != 0:
                 description += f" [URL=https://myanimelist.net/anime/{str(movie['mal_id'])}][img]{self.config['IMAGES']['mal_75']}[/img][/URL]"
@@ -286,6 +288,7 @@ class HDT():
             if movie['tvdb_id'] != 0:
                 description += f"\nhttps://www.thetvdb.com/?id={str(movie['tvdb_id'])}&tab=series"
             if movie['tvmaze_id'] != 0:
+                console.print("HDT setting TV Maze ID:", movie.get('tvmaze_id'))
                 description += f"\nhttps://www.tvmaze.com/shows/{str(movie['tvmaze_id'])}"
             if movie['mal_id'] != 0:
                 description += f"\nhttps://myanimelist.net/anime/{str(movie['mal_id'])}"

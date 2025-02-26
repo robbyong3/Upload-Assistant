@@ -329,6 +329,7 @@ class Prep():
         else:
             meta.setdefault('tvmaze_id', 0)
         meta['tvmaze'] = meta.get('tvmaze_id', 0)
+        console.print(f"TVMAZE ID at prep: {meta.get('tvmaze_id')}")
         # If no imdb, search for it
         if meta.get('imdb_id') == 0:
             meta['imdb_id'] = await search_imdb(filename, meta['search_year'])

@@ -201,6 +201,7 @@ class MTV():
         return
 
     async def edit_group_desc(self, meta):
+        console.print("TVMAZE ID into MTV:", meta.get('tvmaze_id'))
         description = ""
         if meta['imdb_id'] != 0:
             description += f"https://www.imdb.com/title/tt{meta['imdb_id']}"
