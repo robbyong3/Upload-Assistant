@@ -560,10 +560,10 @@ class COMMON():
                 mal = attributes.get('mal_id')
                 imdb = attributes.get('imdb_id')
                 infohash = attributes.get('info_hash')
-                tmdb = None if tmdb == 0 else tmdb
-                tvdb = None if tvdb == 0 else tvdb
-                mal = None if mal == 0 else mal
-                imdb = None if imdb == 0 else imdb
+                tmdb = 0 if tmdb == 0 else tmdb
+                tvdb = 0 if tvdb == 0 else tvdb
+                mal = 0 if mal == 0 else mal
+                imdb = 0 if imdb == 0 else imdb
             else:
                 # Handle response when searching by ID
                 if id and not data:
@@ -577,10 +577,10 @@ class COMMON():
                     mal = attributes.get('mal_id')
                     imdb = attributes.get('imdb_id')
                     infohash = attributes.get('info_hash')
-                    tmdb = None if tmdb == 0 else tmdb
-                    tvdb = None if tvdb == 0 else tvdb
-                    mal = None if mal == 0 else mal
-                    imdb = None if imdb == 0 else imdb
+                    tmdb = 0 if tmdb == 0 else tmdb
+                    tvdb = 0 if tvdb == 0 else tvdb
+                    mal = 0 if mal == 0 else mal
+                    imdb = 0 if imdb == 0 else imdb
                     # Handle file name extraction
                     files = attributes.get('files', [])
                     if files:
@@ -610,7 +610,7 @@ class COMMON():
                 console.print(f"[green]Successfully grabbed description from {tracker}")
                 console.print(f"Extracted description: {description}", markup=False)
 
-                if meta.get('unattended') or (meta.get('blu') or meta.get('aither') or meta.get('lst') or meta.get('oe') or meta.get('tik')):
+                if meta.get('unattended') or (meta.get('blu') or meta.get('aither') or meta.get('lst') or meta.get('oe') or meta.get('tik') or meta.get('jptv')):
                     meta['description'] = description
                     meta['saved_description'] = True
                 else:
@@ -660,7 +660,7 @@ class COMMON():
         params = {}
         data = {}
         # get douban url
-        if int(meta.get('imdb_id', '0')) != 0:
+        if int(meta.get('imdb_id')) != 0:
             data['search'] = f"tt{meta['imdb_id']}"
             ptgen = requests.get(url, params=data)
             if ptgen.json()["error"] is not None:

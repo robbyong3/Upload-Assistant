@@ -7,10 +7,10 @@ import json
 
 
 async def get_imdb_aka_api(imdb_id, meta):
-    if imdb_id == "0":
+    if imdb_id == 0:
         return "", None
-    if not imdb_id.startswith("tt"):
-        imdb_id = f"tt{imdb_id}"
+    if not str(imdb_id).startswith("tt"):
+        imdb_id = f"tt{imdb_id:07d}"
     url = "https://api.graphql.imdb.com/"
     query = {
         "query": f"""
@@ -75,22 +75,24 @@ async def safe_get(data, path, default=None):
 
 async def get_imdb_info_api(imdbID, meta):
     imdb_info = {}
-    if imdbID != "0":
+    if imdbID and imdbID != 0:
         try:
-            if not imdbID.startswith("tt"):
-                imdbIDtt = f"tt{imdbID}"
-            else:
-                imdbIDtt = imdbID
-        except Exception:
+            if not str(imdbID).startswith("tt"):
+                imdbID = f"tt{imdbID:07d}"
+        except Exception as e:
+            console.print(f"[red]Error:[/red] {e}")
             return imdb_info
         query = {
             "query": f"""
             query GetTitleInfo {{
-                title(id: "{imdbIDtt}") {{
+                title(id: "{imdbID}") {{
                 id
                 titleText {{
                     text
                     isOriginalTitle
+                    country {{
+                        text
+                    }}
                 }}
                 originalTitleText {{
                     text
@@ -167,6 +169,19 @@ async def get_imdb_info_api(imdbID, meta):
                     total
                     }}
                 }}
+                akas(first: 100) {{
+                edges {{
+                    node {{
+                    text
+                    country {{
+                        text
+                    }}
+                    language {{
+                        text
+                    }}
+                    }}
+                }}
+                }}
                 }}
             }}
             """
@@ -184,9 +199,9 @@ async def get_imdb_info_api(imdbID, meta):
         title_data = await safe_get(data, ["data", "title"], {})
         if not data or "data" not in data or "title" not in data["data"]:
             return imdb_info
-
         imdb_info['imdbID'] = imdbID
         imdb_info['title'] = await safe_get(title_data, ['titleText', 'text'])
+        imdb_info['country'] = await safe_get(title_data, ['titleText', 'country', 'text'])
         imdb_info['year'] = await safe_get(title_data, ['releaseYear', 'year'])
         original_title = await safe_get(title_data, ['originalTitleText', 'text'], '')
         imdb_info['aka'] = original_title if original_title and original_title != imdb_info['title'] else imdb_info['title']
@@ -211,6 +226,15 @@ async def get_imdb_info_api(imdbID, meta):
                         if name_id.startswith('nm'):
                             imdb_info['directors'].append(name_id)
                     break
+        akas_edges = await safe_get(title_data, ['akas', 'edges'], default=[])
+        imdb_info['akas'] = [
+            {
+                "title": await safe_get(edge, ['node', 'text']),
+                "country": await safe_get(edge, ['node', 'country', 'text']),
+                "language": await safe_get(edge, ['node', 'language', 'text']),
+            }
+            for edge in akas_edges
+        ]
         if meta.get('manual_language'):
             imdb_info['original_langauge'] = meta.get('manual_language')
         imdb_info['episodes'] = []
@@ -240,6 +264,12 @@ async def get_imdb_info_api(imdbID, meta):
             else:
                 meta['tv_year'] = None
 
+        difference = SequenceMatcher(None, meta['title'].lower(), meta['aka'][5:].lower()).ratio()
+        if difference >= 0.9 or meta['aka'][5:].strip() == "" or meta['aka'][5:].strip().lower() in meta['title'].lower():
+            meta['aka'] = ""
+        if f"({meta['year']})" in meta['aka']:
+            meta['aka'] = meta['aka'].replace(f"({meta['year']})", "").strip()
+
     else:
         imdb_info = {
             'title': meta.get('title', ''),
@@ -264,23 +294,5 @@ async def search_imdb(filename, search_year):
     for movie in search:
         if filename in movie.get('title', ''):
             if movie.get('year') == search_year:
-                imdbID = str(movie.movieID).replace('tt', '')
+                imdbID = int(str(movie.movieID).replace('tt', '').strip())
     return imdbID
-
-
-async def imdb_other_meta(self, meta):
-    imdb_info = meta['imdb_info'] = await self.get_imdb_info_api(meta['imdb_id'], meta)
-    meta['title'] = imdb_info['title']
-    meta['year'] = imdb_info['year']
-    meta['aka'] = imdb_info['aka']
-    meta['poster'] = imdb_info['cover']
-    meta['original_language'] = imdb_info['original_language']
-    meta['overview'] = imdb_info['plot']
-    meta['imdb_rating'] = imdb_info['rating']
-
-    difference = SequenceMatcher(None, meta['title'].lower(), meta['aka'][5:].lower()).ratio()
-    if difference >= 0.9 or meta['aka'][5:].strip() == "" or meta['aka'][5:].strip().lower() in meta['title'].lower():
-        meta['aka'] = ""
-    if f"({meta['year']})" in meta['aka']:
-        meta['aka'] = meta['aka'].replace(f"({meta['year']})", "").strip()
-    return meta

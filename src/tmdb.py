@@ -15,95 +15,129 @@ import json
 
 
 async def get_tmdb_from_imdb(meta, filename):
-    if meta.get('tmdb_manual') is not None:
-        meta['tmdb'] = meta['tmdb_manual']
-        return meta
-    imdb_id = meta['imdb']
+    imdb_id = meta['imdb_id']
     if str(imdb_id)[:2].lower() != "tt":
-        imdb_id = f"tt{imdb_id}"
+        imdb_id = f"tt{imdb_id:07d}"
     find = tmdb.Find(id=imdb_id)
     info = find.info(external_source="imdb_id")
     if len(info['movie_results']) >= 1:
         meta['category'] = "MOVIE"
-        meta['tmdb'] = info['movie_results'][0]['id']
+        meta['tmdb_id'] = info['movie_results'][0]['id']
         meta['original_language'] = info['movie_results'][0].get('original_language')
+
     elif len(info['tv_results']) >= 1:
         meta['category'] = "TV"
-        meta['tmdb'] = info['tv_results'][0]['id']
+        meta['tmdb_id'] = info['tv_results'][0]['id']
         meta['original_language'] = info['tv_results'][0].get('original_language')
+
     else:
+        console.print("[yellow]TMDb was unable to find anything with that IMDb ID, checking TVDb...")
+
+        # Check TVDb for an ID before falling back to searching IMDb
+        tvdb_id = meta.get('tvdb_id')
+        if tvdb_id:
+            find_tvdb = tmdb.Find(id=str(tvdb_id))
+            info_tvdb = find_tvdb.info(external_source="tvdb_id")
+            if meta['debug']:
+                console.print("TVDB INFO", info_tvdb)
+
+            if len(info_tvdb['tv_results']) >= 1:
+                meta['category'] = "TV"
+                meta['tmdb_id'] = info_tvdb['tv_results'][0]['id']
+                meta['original_language'] = info_tvdb['tv_results'][0].get('original_language')
+                return meta
+
+        # If TVDb also fails, proceed with searching IMDb
         imdb_info = await get_imdb_info_api(imdb_id.replace('tt', ''), meta)
-        title = imdb_info.get("title")
-        if title is None:
-            title = filename
-        year = imdb_info.get('year')
-        if year is None:
-            year = meta['search_year']
-        console.print(f"[yellow]TMDb was unable to find anything with that IMDb, searching TMDb for {title}")
-        meta = await get_tmdb_id(title, year, meta, meta['category'], imdb_info.get('original title', imdb_info.get('localized title', meta['uuid'])))
-        if meta.get('tmdb') in ('None', '', None, 0, '0'):
+        title = imdb_info.get("title") or filename
+        year = imdb_info.get('year') or meta.get('search_year')
+
+        console.print(f"[yellow]TMDb was unable to find anything from external IDs, searching TMDb for {title} ({year})")
+
+        meta = await get_tmdb_id(
+            title, year, meta, meta['category'],
+            imdb_info.get('original title', imdb_info.get('localized title', meta['uuid']))
+        )
+
+        if meta.get('tmdb_id') in ('None', '', None, 0, '0'):
             if meta.get('mode', 'discord') == 'cli':
                 console.print('[yellow]Unable to find a matching TMDb entry')
-                tmdb_id = console.input("Please enter tmdb id: ")
+                tmdb_id = console.input("Please enter TMDb ID: ")
                 parser = Args(config=config)
-                meta['category'], meta['tmdb'] = parser.parse_tmdb_id(id=tmdb_id, category=meta.get('category'))
+                meta['category'], meta['tmdb_id'] = parser.parse_tmdb_id(id=tmdb_id, category=meta.get('category'))
+
     await asyncio.sleep(2)
     return meta
 
 
 async def get_tmdb_id(filename, search_year, meta, category, untouched_filename="", attempted=0):
+    console.print("[bold cyan]Fetching TMDB ID...[/bold cyan]")
     search = tmdb.Search()
     try:
+        # Primary search attempt
         if category == "MOVIE":
             search.movie(query=filename, year=search_year)
         elif category == "TV":
             search.tv(query=filename, first_air_date_year=search_year)
-        if meta.get('tmdb_manual') is not None:
-            meta['tmdb'] = meta['tmdb_manual']
-        else:
-            meta['tmdb'] = search.results[0]['id']
-            meta['category'] = category
-    except IndexError:
+
+        if search.results:
+            meta['tmdb_id'] = search.results[0]['id']
+            return meta  # Successful match, return immediately
+
+    except Exception as e:
+        console.print(f"[bold red]TMDb search error:[/bold red] {e}")
+
+    # Secondary attempt: Try searching without the year
+    console.print("[yellow]Retrying without year...[/yellow]")
+    try:
+        if category == "MOVIE":
+            search.movie(query=filename)
+        elif category == "TV":
+            search.tv(query=filename)
+
+        if search.results:
+            meta['tmdb_id'] = search.results[0]['id']
+            return meta  # Successful match, return immediately
+
+    except Exception as e:
+        console.print(f"[bold red]Secondary search error:[/bold red] {e}")
+
+    # If still no match, attempt alternative category switch
+    if attempted < 1:
+        new_category = "TV" if category == "MOVIE" else "MOVIE"
+        console.print(f"[bold yellow]Switching category to {new_category} and retrying...[/bold yellow]")
+        return await get_tmdb_id(filename, search_year, meta, new_category, untouched_filename, attempted + 1)
+
+    # Last attempt: Try parsing a better title
+    if attempted == 1:
         try:
-            if category == "MOVIE":
-                search.movie(query=filename)
-            elif category == "TV":
-                search.tv(query=filename)
-            meta['tmdb'] = search.results[0]['id']
-            meta['category'] = category
-        except IndexError:
-            if category == "MOVIE":
-                category = "TV"
-            else:
-                category = "MOVIE"
-            if attempted <= 1:
-                attempted += 1
-                meta = await get_tmdb_id(filename, search_year, meta, category, untouched_filename, attempted)
-            elif attempted == 2:
-                attempted += 1
-                meta = await get_tmdb_id(anitopy.parse(guessit(untouched_filename, {"excludes": ["country", "language"]})['title'])['anime_title'], search_year, meta, meta['category'], untouched_filename, attempted)
-            if meta['tmdb'] in (None, ""):
-                console.print(f"[red]Unable to find TMDb match for {filename}")
-                if meta.get('mode', 'discord') == 'cli':
-                    tmdb_id = cli_ui.ask_string("Please enter tmdb id in this format: tv/12345 or movie/12345")
-                    parser = Args(config=config)
-                    meta['category'], meta['tmdb'] = parser.parse_tmdb_id(id=tmdb_id, category=meta.get('category'))
-                    meta['tmdb_manual'] = meta['tmdb']
-                    return meta
+            parsed_title = anitopy.parse(
+                guessit(untouched_filename, {"excludes": ["country", "language"]})['title']
+            )['anime_title']
+            console.print(f"[bold yellow]Trying parsed title: {parsed_title}[/bold yellow]")
+            return await get_tmdb_id(parsed_title, search_year, meta, meta['category'], untouched_filename, attempted + 1)
+        except KeyError:
+            console.print("[bold red]Failed to parse title for TMDb search.[/bold red]")
+
+    # No match found, prompt user if in CLI mode
+    console.print(f"[bold red]Unable to find TMDb match for {filename}[/bold red]")
+
+    if meta.get('mode', 'discord') == 'cli':
+        tmdb_id = cli_ui.ask_string("Please enter TMDb ID in this format: tv/12345 or movie/12345")
+        parser = Args(config=config)
+        meta['category'], meta['tmdb_id'] = parser.parse_tmdb_id(id=tmdb_id, category=meta.get('category'))
+        meta['tmdb_manual'] = meta['tmdb_id']
 
     return meta
 
 
 async def tmdb_other_meta(meta):
-    if meta['debug']:
-        console.print("tmdb id in tmdb_other", meta['tmdb'], meta['tmdb_manual'])
-        console.print("Category", meta['category'])
-    if meta['tmdb'] == "0":
+    if meta['tmdb_id'] == 0:
         try:
             title = guessit(meta['path'], {"excludes": ["country", "language"]})['title'].lower()
             title = title.split('aka')[0]
             meta = await get_tmdb_id(guessit(title, {"excludes": ["country", "language"]})['title'], meta['search_year'], meta)
-            if meta['tmdb'] == "0":
+            if meta['tmdb_id'] == 0:
                 meta = await get_tmdb_id(title, "", meta, meta['category'])
         except Exception:
             if meta.get('mode', 'discord') == 'cli':
@@ -113,8 +147,11 @@ async def tmdb_other_meta(meta):
                 console.print("[bold red]Unable to find tmdb entry")
                 return meta
     if meta['category'] == "MOVIE":
-        movie = tmdb.Movies(meta['tmdb'])
+        movie = tmdb.Movies(meta['tmdb_id'])
         response = movie.info()
+        alternate = movie.alternative_titles()
+        if meta['debug']:
+            console.print("ALTERNATE", alternate)
         if meta['debug']:
             console.print(f"[cyan]TMDB Response: {json.dumps(response, indent=2)[:600]}...")
         meta['title'] = response['title']
@@ -124,21 +161,28 @@ async def tmdb_other_meta(meta):
             console.print('[yellow]TMDB does not have a release date, using year from filename instead (if it exists)')
             meta['year'] = meta['search_year']
         external = movie.external_ids()
-        if meta.get('imdb', None) is None:
-            imdb_id = external.get('imdb_id', "0")
-            if imdb_id == "" or imdb_id is None:
-                meta['imdb_id'] = '0'
+        if meta.get('imdb_id', 0) == 0:
+            imdb_id = external.get('imdb_id', None)
+
+            # Ensure imdb_id is a valid string and strip 'tt' prefix if present
+            if not imdb_id or imdb_id in ["", " ", "None", None]:
+                meta['imdb_id'] = 0
             else:
-                meta['imdb_id'] = str(int(imdb_id.replace('tt', ''))).zfill(7)
+                imdb_id_clean = imdb_id.lstrip('t')  # Remove 'tt' prefix safely
+                if imdb_id_clean.isdigit():  # Ensure it's a valid numeric string
+                    meta['imdb_id'] = int(imdb_id_clean)
+                else:
+                    console.print(f"[bold red]Invalid IMDb ID returned: {imdb_id}[/bold red]")
+                    meta['imdb_id'] = 0  # Default to 0 if invalid
+
         else:
-            meta['imdb_id'] = str(meta['imdb']).replace('tt', '').zfill(7)
-        if meta.get('tvdb_manual'):
-            meta['tvdb_id'] = meta['tvdb_manual']
-        else:
-            if meta.get('tvdb_id', '0') in ['', ' ', None, 'None', '0']:
-                meta['tvdb_id'] = external.get('tvdb_id', '0')
-                if meta['tvdb_id'] in ["", None, " ", "None"]:
-                    meta['tvdb_id'] = '0'
+            meta['imdb_id'] = int(meta.get('imdb_id', 0))
+
+        # TVDB ID Handling
+        if meta.get('tvdb_id') == 0:
+            meta['tvdb_id'] = external.get('tvdb_id', None)
+            if meta['tvdb_id'] in ["", " ", "None", None]:
+                meta['tvdb_id'] = 0
         try:
             videos = movie.videos()
             for each in videos.get('results', []):
@@ -160,16 +204,19 @@ async def tmdb_other_meta(meta):
         meta['tmdb_directors'] = await get_directors(movie)
         if meta.get('anime', False) is False:
             meta['mal_id'], meta['aka'], meta['anime'], meta['demographic'] = await get_anime(response, meta)
-        if meta.get('mal') is not None:
-            meta['mal_id'] = meta['mal']
+        if meta.get('mal_manual') != 0:
+            meta['mal_id'] = meta['mal_manual']
         meta['poster'] = response.get('poster_path', "")
         meta['tmdb_poster'] = response.get('poster_path', "")
         meta['overview'] = response['overview']
         meta['tmdb_type'] = 'Movie'
         meta['runtime'] = response.get('episode_run_time', 60)
     elif meta['category'] == "TV":
-        tv = tmdb.TV(meta['tmdb'])
+        tv = tmdb.TV(meta['tmdb_id'])
         response = tv.info()
+        alternate = tv.alternative_titles()
+        if meta['debug']:
+            console.print("ALTERNATE", alternate)
         if meta['debug']:
             console.print(f"[cyan]TMDB Response: {json.dumps(response, indent=2)[:600]}...")
         meta['title'] = response['name']
@@ -179,21 +226,28 @@ async def tmdb_other_meta(meta):
             console.print('[yellow]TMDB does not have a release date, using year from filename instead (if it exists)')
             meta['year'] = meta['search_year']
         external = tv.external_ids()
-        if meta.get('imdb', None) is None:
-            imdb_id = external.get('imdb_id', "0")
-            if imdb_id == "" or imdb_id is None:
-                meta['imdb_id'] = '0'
+        if meta.get('imdb_id', 0) == 0:
+            imdb_id = external.get('imdb_id', None)
+
+            # Ensure imdb_id is a valid string and strip 'tt' prefix if present
+            if not imdb_id or imdb_id in ["", " ", "None", None]:
+                meta['imdb_id'] = 0
             else:
-                meta['imdb_id'] = str(int(imdb_id.replace('tt', ''))).zfill(7)
+                imdb_id_clean = imdb_id.lstrip('t')  # Remove 'tt' prefix safely
+                if imdb_id_clean.isdigit():  # Ensure it's a valid numeric string
+                    meta['imdb_id'] = int(imdb_id_clean)
+                else:
+                    console.print(f"[bold red]Invalid IMDb ID returned: {imdb_id}[/bold red]")
+                    meta['imdb_id'] = 0  # Default to 0 if invalid
+
         else:
-            meta['imdb_id'] = str(int(meta['imdb'].replace('tt', ''))).zfill(7)
-        if meta.get('tvdb_manual'):
-            meta['tvdb_id'] = meta['tvdb_manual']
-        else:
-            if meta.get('tvdb_id', '0') in ['', ' ', None, 'None', '0']:
-                meta['tvdb_id'] = external.get('tvdb_id', '0')
-                if meta['tvdb_id'] in ["", None, " ", "None"]:
-                    meta['tvdb_id'] = '0'
+            meta['imdb_id'] = int(meta.get('imdb_id', 0))
+
+        # TVDB ID Handling
+        if meta.get('tvdb_id') == 0:
+            meta['tvdb_id'] = external.get('tvdb_id', None)
+            if meta['tvdb_id'] in ["", " ", "None", None]:
+                meta['tvdb_id'] = 0
         try:
             videos = tv.videos()
             for each in videos.get('results', []):
@@ -214,8 +268,8 @@ async def tmdb_other_meta(meta):
         meta['genres'] = await get_genres(response)
         meta['tmdb_directors'] = await get_directors(tv)
         meta['mal_id'], meta['aka'], meta['anime'], meta['demographic'] = await get_anime(response, meta)
-        if meta.get('mal') is not None:
-            meta['mal_id'] = meta['mal']
+        if meta.get('mal_manual') != 0:
+            meta['mal_id'] = meta['mal_manual']
         meta['poster'] = response.get('poster_path', '')
         meta['overview'] = response['overview']
 
@@ -284,7 +338,7 @@ async def get_anime(response, meta):
         if each['id'] == 16:
             animation = True
     if response['original_language'] == 'ja' and animation is True:
-        romaji, mal_id, eng_title, season_year, episodes, demographic = await get_romaji(tmdb_name, meta.get('mal', None))
+        romaji, mal_id, eng_title, season_year, episodes, demographic = await get_romaji(tmdb_name, meta.get('mal_id', None))
         alt_name = f" AKA {romaji}"
 
         anime = True
@@ -294,8 +348,6 @@ async def get_anime(response, meta):
         mal_id = 0
     if meta.get('mal_id', 0) != 0:
         mal_id = meta.get('mal_id')
-    if meta.get('mal') is not None:
-        mal_id = meta.get('mal')
     return mal_id, alt_name, anime, demographic
 
 

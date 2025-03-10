@@ -65,13 +65,13 @@ class MTV():
                         meta=meta,
                         path=Path(meta['path']),
                         trackers=["https://fake.tracker"],
-                        source="L4G",
+                        source="Audionut UA",
                         private=True,
                         exclude_globs=exclude,  # Ensure this is always a list
                         include_globs=include,  # Ensure this is always a list
                         creation_date=datetime.now(),
-                        comment="Created by L4G's Upload Assistant",
-                        created_by="L4G's Upload Assistant"
+                        comment="Created by Audionut's Upload Assistant",
+                        created_by="Audionut's Upload Assistant"
                     )
 
                     new_torrent.piece_size = 8 * 1024 * 1024
@@ -202,7 +202,7 @@ class MTV():
 
     async def edit_group_desc(self, meta):
         description = ""
-        if meta['imdb_id'] not in ("0", "", None):
+        if meta['imdb_id'] != 0:
             description += f"https://www.imdb.com/title/tt{meta['imdb_id']}"
         if meta['tmdb'] != 0:
             description += f"\nhttps://www.themoviedb.org/{str(meta['category'].lower())}/{str(meta['tmdb'])}"
@@ -228,7 +228,6 @@ class MTV():
         else:
             mtv_name = meta['name']
             prefix_removed = False
-            prefix_index = -1  # This will record the location where the token was found.
             tokens = ("Dual-Audio ", "Dubbed ")
 
             for token in tokens:
@@ -239,20 +238,22 @@ class MTV():
                     # Remove only the first occurrence of the token.
                     mtv_name = mtv_name[:index] + mtv_name[index + len(token):]
                     break
-            console.print(mtv_name)
             audio_str = meta['audio']
             if prefix_removed:
                 # Remove the token from the audio string too.
                 for token in tokens:
                     audio_str = audio_str.replace(token, "")
+
+            if prefix_removed and prefix_index != -1:
+                mtv_name = f"{mtv_name[:prefix_index]}DUAL {mtv_name[prefix_index:].lstrip()}"
+
             if meta.get('type') in ('WEBDL', 'WEBRIP', 'ENCODE') and "DD" in audio_str:
                 mtv_name = mtv_name.replace(audio_str, audio_str.replace(' ', '', 1))
             if meta['category'] == "TV" and meta.get('tv_pack', 0) == 0 and meta.get('episode_title_storage', '').strip() != '' and meta['episode'].strip() != '':
                 mtv_name = mtv_name.replace(meta['episode'], f"{meta['episode']} {meta['episode_title_storage']}")
             if 'DD+' in meta.get('audio', '') and 'DDP' in meta['uuid']:
                 mtv_name = mtv_name.replace('DD+', 'DDP')
-            if prefix_removed and prefix_index != -1:
-                mtv_name = mtv_name[:prefix_index] + "DUAL " + mtv_name[prefix_index:]
+
         if meta['source'].lower().replace('-', '') in mtv_name.replace('-', '').lower():
             if not meta['isdir']:
                 # Check if there is a valid file extension, otherwise, skip the split
@@ -534,15 +535,16 @@ class MTV():
         params = {
             't': 'search',
             'apikey': self.config['TRACKERS'][self.tracker]['api_key'].strip(),
-            'q': ""
+            'q': "",
+            'limit': "100"
         }
 
-        if meta['imdb_id'] not in ("0", "", None):
-            params['imdbid'] = "tt" + meta['imdb_id']
-        elif meta['tmdb'] != "0":
-            params['tmdbid'] = meta['tmdb']
+        if meta['imdb_id'] != 0:
+            params['imdbid'] = "tt" + str(meta['imdb_id'])
+        elif meta['tmdb'] != 0:
+            params['tmdbid'] = str(meta['tmdb'])
         elif meta['tvdb_id'] != 0:
-            params['tvdbid'] = meta['tvdb_id']
+            params['tvdbid'] = str(meta['tvdb_id'])
         else:
             params['q'] = meta['title'].replace(': ', ' ').replace('’', '').replace("'", '')
 

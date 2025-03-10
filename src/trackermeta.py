@@ -7,6 +7,7 @@ import sys
 from PIL import Image
 import io
 from io import BytesIO
+import os
 
 # Define expected amount of screenshots from the config
 expected_images = int(config['DEFAULT']['screens'])
@@ -52,6 +53,8 @@ async def check_images_concurrently(imagelist, meta):
         return []
 
     # Function to check each image's URL, host, and log resolution
+    save_directory = f"{meta['base_dir']}/tmp/{meta['uuid']}"
+
     async def check_and_collect(image_dict):
         img_url = image_dict.get('raw_url')
         if not img_url:
@@ -72,11 +75,8 @@ async def check_images_concurrently(imagelist, meta):
                         try:
                             image = Image.open(BytesIO(image_content))
                             vertical_resolution = image.height
-                            lower_bound = expected_vertical_resolution * 0.70  # 30% below
-                            if meta['is_disc'] == "DVD":
-                                upper_bound = expected_vertical_resolution * 1.30
-                            else:
-                                upper_bound = expected_vertical_resolution * 1.00
+                            lower_bound = expected_vertical_resolution * 0.70
+                            upper_bound = expected_vertical_resolution * (1.30 if meta['is_disc'] == "DVD" else 1.00)
 
                             if not (lower_bound <= vertical_resolution <= upper_bound):
                                 console.print(
@@ -85,7 +85,16 @@ async def check_images_concurrently(imagelist, meta):
                                 )
                                 return None
 
+                            # Save image
+                            os.makedirs(save_directory, exist_ok=True)
+                            image_filename = os.path.join(save_directory, os.path.basename(img_url))
+                            with open(image_filename, "wb") as f:
+                                f.write(image_content)
+
+                            console.print(f"Saved {img_url} as {image_filename}")
+
                             meta['image_sizes'][img_url] = len(image_content)
+
                             if meta['debug']:
                                 console.print(
                                     f"Valid image {img_url} with resolution {image.width}x{image.height} "
@@ -144,19 +153,19 @@ async def update_meta_with_unit3d_data(meta, tracker_data, tracker_name):
     # Unpack the expected 9 elements, ignoring any additional ones
     tmdb, imdb, tvdb, mal, desc, category, infohash, imagelist, filename, *rest = tracker_data
 
-    if tmdb not in [None, '0']:
-        meta['tmdb_manual'] = tmdb
+    if tmdb:
+        meta['tmdb_id'] = tmdb
         if meta['debug']:
-            console.print("set TMDB ID:", meta['tmdb_manual'])
-    if imdb not in [None, '0']:
-        meta['imdb'] = str(imdb).zfill(7)
+            console.print("set TMDB ID:", meta['tmdb_id'])
+    if imdb:
+        meta['imdb_id'] = imdb
         if meta['debug']:
-            console.print("set IMDB ID:", meta['imdb'])
-    if tvdb not in [None, '0']:
+            console.print("set IMDB ID:", meta['imdb_id'])
+    if tvdb:
         meta['tvdb_id'] = tvdb
-    if mal not in [None, '0']:
-        meta['mal'] = mal
-    if desc not in [None, '0', '']:
+    if mal:
+        meta['mal_id'] = mal
+    if desc:
         meta['description'] = desc
         with open(f"{meta['base_dir']}/tmp/{meta['uuid']}/DESCRIPTION.txt", 'w', newline="", encoding='utf8') as description:
             if len(desc) > 0:
@@ -168,7 +177,7 @@ async def update_meta_with_unit3d_data(meta, tracker_data, tracker_name):
             if valid_images:
                 meta['image_list'] = valid_images
                 if meta.get('image_list'):  # Double-check if image_list is set before handling it
-                    if not (meta.get('blu') or meta.get('aither') or meta.get('lst') or meta.get('oe') or meta.get('tik')) or meta['unattended']:
+                    if not (meta.get('blu') or meta.get('aither') or meta.get('lst') or meta.get('oe') or meta.get('tik') or meta.get('jptv')) or meta['unattended']:
                         await handle_image_list(meta, tracker_name)
 
     if filename:
@@ -182,7 +191,7 @@ async def update_metadata_from_tracker(tracker_name, tracker_instance, meta, sea
     manual_key = f"{tracker_key}_manual"
     found_match = False
 
-    if tracker_name in ["BLU", "AITHER", "LST", "OE", "TIK"]:
+    if tracker_name in ["BLU", "AITHER", "LST", "OE", "TIK", "JPTV"]:
         if meta.get(tracker_key) is not None:
             console.print(f"[cyan]{tracker_name} ID found in meta, reusing existing ID: {meta[tracker_key]}[/cyan]")
             tracker_data = await COMMON(config).unit3d_torrent_info(
@@ -215,8 +224,9 @@ async def update_metadata_from_tracker(tracker_name, tracker_instance, meta, sea
         if meta.get('ptp') is None:
             imdb_id, ptp_torrent_id, ptp_torrent_hash = await tracker_instance.get_ptp_id_imdb(search_term, search_file_folder, meta)
             if ptp_torrent_id:
-                meta['imdb'] = str(imdb_id).zfill(7) if imdb_id else None
-                console.print(f"[green]{tracker_name} IMDb ID found: tt{meta['imdb']}[/green]")
+                if imdb_id:
+                    meta['imdb_id'] = imdb_id
+                    console.print(f"[green]{tracker_name} IMDb ID found: tt{meta['imdb_id']}[/green]")
 
                 if not meta['unattended']:
                     if await prompt_user_for_confirmation("Do you want to use this ID data from PTP?"):
@@ -237,7 +247,7 @@ async def update_metadata_from_tracker(tracker_name, tracker_instance, meta, sea
 
                     else:
                         found_match = False
-                        meta['imdb'] = None
+                        meta['imdb_id'] = 0
 
                 else:
                     found_match = True
@@ -261,8 +271,8 @@ async def update_metadata_from_tracker(tracker_name, tracker_instance, meta, sea
             console.print("[cyan]Using specified PTP ID to get IMDb ID[/cyan]")
             imdb_id, _, meta['ext_torrenthash'] = await tracker_instance.get_imdb_from_torrent_id(ptp_torrent_id)
             if imdb_id:
-                meta['imdb'] = str(imdb_id).zfill(7)
-                console.print(f"[green]IMDb ID found: tt{meta['imdb']}[/green]")
+                meta['imdb_id'] = imdb_id
+                console.print(f"[green]IMDb ID found: tt{meta['imdb_id']}[/green]")
                 found_match = True
                 meta['skipit'] = True
                 if only_id is not True:
@@ -290,8 +300,8 @@ async def update_metadata_from_tracker(tracker_name, tracker_instance, meta, sea
             imdb, tvdb_id, hdb_name, meta['ext_torrenthash'] = await tracker_instance.get_info_from_torrent_id(meta[tracker_key])
 
             if imdb or tvdb_id:
-                meta['imdb_id'] = str(imdb).zfill(7) if imdb else None
-                meta['tvdb_id'] = str(tvdb_id) if tvdb_id else meta.get('tvdb_id')
+                meta['imdb_id'] = imdb if imdb else 0
+                meta['tvdb_id'] = tvdb_id if tvdb_id else 0
                 meta['hdb_name'] = hdb_name
                 found_match = True
                 console.print(f"[green]{tracker_name} data found: IMDb ID: {imdb}, TVDb ID: {meta['tvdb_id']}, HDB Name: {meta['hdb_name']}[/green]")
@@ -304,8 +314,8 @@ async def update_metadata_from_tracker(tracker_name, tracker_instance, meta, sea
             # Use search_filename function if ID is not found in meta
             imdb, tvdb_id, hdb_name, meta['ext_torrenthash'], tracker_id = await tracker_instance.search_filename(search_term, search_file_folder, meta)
 
-            meta['imdb_id'] = str(imdb).zfill(7) if imdb else None
-            meta['tvdb_id'] = str(tvdb_id) if tvdb_id else meta.get('tvdb_id')
+            meta['imdb_id'] = imdb if imdb else meta.get('imdb_id')
+            meta['tvdb_id'] = tvdb_id if tvdb_id else meta.get('tvdb_id')
             meta['hdb_name'] = hdb_name
             if tracker_id:
                 meta[tracker_key] = tracker_id
@@ -319,8 +329,8 @@ async def update_metadata_from_tracker(tracker_name, tracker_instance, meta, sea
                     else:
                         console.print(f"[yellow]{tracker_name} data discarded.[/yellow]")
                         meta[tracker_key] = None
-                        meta['tvdb_id'] = None
-                        meta['imdb_id'] = None
+                        meta['tvdb_id'] = 0
+                        meta['imdb_id'] = 0
                         meta['hdb_name'] = None
                         found_match = False
                 else:

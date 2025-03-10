@@ -6,6 +6,11 @@ config = {
         # If you change any of these options, remove the #
         # -----------------------
 
+        # will print a notice if an update is available
+        "update_notification": True,
+        # will print the changelog if an update is available
+        "verbose_notification": False,
+
         "tmdb_api": "tmdb_api key",
         # btn api key for infohash parsing
         "btn_api": "btn_api key",
@@ -45,10 +50,25 @@ config = {
         # description, skip creating and uploading any further screenshots.
         "cutoff_screens": "3",
 
-        # multi processing task limit
-        # When optimizing images, limit to this many concurrent tasks
-        # defaults to os.cpu_count() // 2 if this value not set
+        # MULTI PROCESSING
+        # The optimization task is resource intensive, it can and will break linux terminals
+        # Find a balance of the options below that give the best performace without
+        # breaking your terminal. Windows doesn't care, even when spawing 200+ threads.
+
+        # When optimizing images, limit to this many concurrent workers.
+        # Each worker is a fresh python.exe instance.
+        # The final value used will be the lowest value of either 'number of screens'
+        # or this value.
+        # defaults to 1 if not set. Uncomment line below and set a value
         # "process_limit": "1",
+
+        # When optimizing images, limit to this many threads spawned by each worker above
+        # On the authors windows box, each python instance is 8 threads (including background wait
+        # threads that self terminate with time), thus while this value sets the number of threads
+        # used for each optimization worker, the total amount of threads spawned equals:
+        # (8) + threads * ('process_limit' OR 'screens')
+        # Defaults to 1 if not set. Uncomment line before and set a value
+        # "threads": "1",
 
         # Providing the option to change the size of the screenshot thumbnails where supported.
         # Default is 350, ie [img=350]
@@ -105,6 +125,9 @@ config = {
         # set true to only grab meta id's from trackers, not descriptions and images
         "only_id": False,
 
+        # set true to use mkbrr for torrent creation
+        "mkbrr": False,
+
     },
 
     # these are used for DB links on AR
@@ -118,13 +141,13 @@ config = {
 
     "TRACKERS": {
         # Which trackers do you want to upload to?
-        # Available tracker: ACM, AITHER, AL, ANT, AR, BHD, BHDTV, BLU, CBR, FNP, FRIKI, HDB, HDT, HUNO, ITT, JPTV, LCD, LST, LT, MTV, NBL, OE, OTW, PSS, PTER, PTP, PTT, R4E, RF, RTF, SN, STC, THR, TIK, TL, ULCX, UTP, YOINK
+        # Available tracker: ACM, AITHER, AL, ANT, AR, BHD, BHDTV, BLU, CBR, FNP, FRIKI, HDB, HDT, HUNO, ITT, JPTV, LCD, LST, LT, MTV, NBL, OE, OTW, PSS, PTER, PTP, PTT, R4E, RF, RTF, SN, STC, THR, TIK, TL, ULCX, UTP, YOINK, YUS
         # Remove the trackers from the default_trackers list that are not used, to save being asked everytime about tracker you do not have access too.
-        "default_trackers": "ACM, AITHER, AL, ANT, AR, BHD, BHDTV, BLU, CBR, FNP, FRIKI, HDB, HDT, HUNO, ITT, JPTV, LCD, LST, LT, MTV, NBL, OE, OTW, PSS, PTER, PTP, PTT, R4E, RF, RTF, SN, STC, THR, TIK, TL, ULCX, UTP, YOINK",
+        "default_trackers": "ACM, AITHER, AL, ANT, AR, BHD, BHDTV, BLU, CBR, FNP, FRIKI, HDB, HDT, HUNO, ITT, JPTV, LCD, LST, LT, MTV, NBL, OE, OTW, PSS, PTER, PTP, PTT, R4E, RF, RTF, SN, STC, THR, TIK, TL, ULCX, UTP, YOINK, YUS",
 
         "ACM": {
             "api_key": "ACM api key",
-            "announce_url": "https://asiancinema.me/announce/customannounceurl",
+            "announce_url": "https://eiga.moi/announce/customannounceurl",
             # "anon" : False,
 
             # FOR INTERNAL USE ONLY:
@@ -392,10 +415,14 @@ config = {
             "announce_url": "https://yoinked.org/announce/customannounceurl",
             # "anon" : "False"
         },
+        "YUS": {
+            "api_key": "YUS api key",
+            "announce_url": "https://yu-scene.net/announce/customannounceurl",
+            # "anon" : "False"
+        },
     },
 
     # enable_search to True will automatically try and find a suitable hash to save having to rehash when creating torrents
-    # Should use the qbit API, but will also use the torrent_storage_dir to find suitable hashes
     # If you find issue, especially in local/remote path mapping, use the "--debug" argument to print out some related details
     "TORRENT_CLIENTS": {
         # Name your torrent clients here, for example, this example is named "Client1" and is set as default_torrent_client above
@@ -409,6 +436,7 @@ config = {
             "qbit_port": "8080",
             "qbit_user": "username",
             "qbit_pass": "password",
+            # only set qBitTorrent torrent_storage_dir if API searching does not work
             # "torrent_storage_dir": "path/to/BT_backup folder"  ## use double-backslash on windows eg: "C:\\client\\backup"
 
             # Remote path mapping (docker/etc.) CASE SENSITIVE

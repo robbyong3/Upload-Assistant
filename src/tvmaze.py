@@ -9,6 +9,11 @@ async def search_tvmaze(filename, year, imdbID, tvdbID, meta):
     except ValueError:
         print(f"Error: tvdbID is not a valid integer. Received: {tvdbID}")
         tvdbID = 0
+    try:
+        imdbID = f"{imdbID:07d}" if imdbID is not None else 0
+    except ValueError:
+        print(f"Error: tvdbID is not a valid integer. Received: {imdbID}")
+        imdbID = 0
 
     if meta.get('tvmaze_manual'):
         tvmazeID = int(meta['tvmaze_manual'])
@@ -16,9 +21,6 @@ async def search_tvmaze(filename, year, imdbID, tvdbID, meta):
     else:
         tvmazeID = 0
         results = []
-
-        if imdbID is None:
-            imdbID = '0'
 
         if meta['manual_date'] is None:
             if int(tvdbID) != 0:

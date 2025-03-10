@@ -2,7 +2,7 @@ import asyncio
 import os
 from torf import Torrent
 from src.trackers.PTP import PTP
-from src.trackersetup import TRACKER_SETUP, tracker_class_map
+from src.trackersetup import TRACKER_SETUP, tracker_class_map, http_trackers
 from src.console import console
 from data.config import config
 from src.trackers.COMMON import COMMON
@@ -29,6 +29,7 @@ async def process_all_trackers(meta):
         local_tracker_status = {'banned': False, 'skipped': False, 'dupe': False, 'upload': False}
         disctype = local_meta.get('disctype', None)
         tracker_name = tracker_name.replace(" ", "").upper().strip()
+        console.print(f"\n[bold yellow]Processing Tracker: {tracker_name}[/bold yellow]")
 
         if local_meta['name'].endswith('DUPE?'):
             local_meta['name'] = local_meta['name'].replace(' DUPE?', '')
@@ -39,13 +40,23 @@ async def process_all_trackers(meta):
 
         if tracker_name in tracker_class_map:
             tracker_class = tracker_class_map[tracker_name](config=config)
+            if tracker_name in http_trackers:
+                await tracker_class.validate_credentials(meta)
             if tracker_name in {"THR", "PTP"}:
-                if local_meta.get('imdb_id', '0') == '0':
-                    imdb_id = "0" if local_meta['unattended'] else cli_ui.ask_string("Unable to find IMDB id, please enter e.g.(tt1234567)")
-                    if imdb_id == "":
-                        meta['imdb_id'] = "0"
+                if local_meta.get('imdb_id', 0) == 0:
+                    imdb_id = 0 if local_meta.get('unattended', False) else cli_ui.ask_string(
+                        "Unable to find IMDB id, please enter e.g.(tt1234567)"
+                    ).strip()
+
+                    if not imdb_id:
+                        meta['imdb_id'] = 0
                     else:
-                        meta['imdb_id'] = imdb_id.replace('tt', '').zfill(7)
+                        imdb_id = imdb_id.lower()
+                        if imdb_id.startswith("tt") and imdb_id[2:].isdigit():
+                            meta['imdb_id'] = imdb_id[2:].zfill(7)
+                        else:
+                            cli_ui.error("Invalid IMDB ID format. Expected format: tt1234567")
+                            meta['imdb_id'] = 0
 
             if tracker_name == "PTP":
                 console.print("[yellow]Searching for Group ID on PTP")
@@ -87,10 +98,6 @@ async def process_all_trackers(meta):
                 if tracker_name == "MTV":
                     if not local_tracker_status['banned'] and not local_tracker_status['skipped'] and not local_tracker_status['dupe']:
                         tracker_config = config['TRACKERS'].get(tracker_name, {})
-                        if str(tracker_config.get('prefer_mtv_torrent', 'false')).lower() == "true":
-                            local_meta['prefer_small_pieces'] = True
-                        else:
-                            local_meta['prefer_small_pieces'] = False
                         if str(tracker_config.get('skip_if_rehash', 'false')).lower() == "true":
                             torrent_path = os.path.abspath(f"{local_meta['base_dir']}/tmp/{local_meta['uuid']}/BASE.torrent")
                             if not os.path.exists(torrent_path):
