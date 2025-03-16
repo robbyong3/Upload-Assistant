@@ -432,6 +432,7 @@ class DiscParse():
             each['ifo_mi_full'] = MediaInfo.parse(ifo, output='STRING', full=False).replace('\r\n', '\n')
 
             size = sum(os.path.getsize(f) for f in os.listdir('.') if os.path.isfile(f)) / float(1 << 30)
+            each['disc_size'] = round(size, 2)
             if size <= 7.95:
                 dvd_size = "DVD9"
                 if size <= 4.37:

@@ -9,7 +9,7 @@ from src.imdb import get_imdb_info_api, search_imdb
 from src.trackermeta import update_metadata_from_tracker
 from src.tmdb import tmdb_other_meta, get_tmdb_imdb_from_mediainfo, get_tmdb_from_imdb, get_tmdb_id
 from src.region import get_region, get_distributor, get_service
-from src.exportmi import exportInfo, mi_resolution
+from src.exportmi import exportInfo, mi_resolution, combine_dvd_mediainfo
 from src.getseasonep import get_season_episode
 from src.btnid import get_btn_torrents, get_bhd_torrents
 
@@ -699,12 +699,35 @@ class Prep():
                 discs, bdinfo = await parse.get_bdinfo(meta, meta['discs'], meta['uuid'], meta['base_dir'], meta['discs'])
         elif is_disc == "DVD":
             discs = await parse.get_dvdinfo(discs)
-            export = open(f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO.txt", 'w', newline="", encoding='utf-8')
-            export.write(discs[0]['ifo_mi'])
-            export.close()
-            export_clean = open(f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO_CLEANPATH.txt", 'w', newline="", encoding='utf-8')
-            export_clean.write(discs[0]['ifo_mi'])
-            export_clean.close()
+
+            # Get the path to the MediaInfo output file
+            mediainfo_path = f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO.txt"
+            mediainfo_ifo_path = f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO_IFO.txt"
+            mediainfo_vob_path = f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO_VOB.txt"
+
+            # First, write the individual MediaInfo files
+            with open(mediainfo_ifo_path, 'w', newline="", encoding='utf-8') as export:
+                export.write(discs[0]['ifo_mi'])
+
+            with open(mediainfo_vob_path, 'w', newline="", encoding='utf-8') as export:
+                export.write(discs[0]['vob_mi'])
+
+            # Now combine them
+            await combine_dvd_mediainfo(
+                vob_mi=discs[0]['vob_mi'],
+                ifo_mi=discs[0]['ifo_mi'],
+                output_path=mediainfo_path,
+                disc_size=discs[0].get('disc_size')
+            )
+
+            # Create a clean path version by removing file paths
+            with open(f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO_CLEANPATH.txt", 'w', newline="", encoding='utf-8') as export_clean:
+                with open(mediainfo_path, 'r', encoding='utf-8') as source:
+                    content = source.read()
+                    # Replace actual file paths with just the filenames
+                    for disc in discs:
+                        content = content.replace(disc['path'], os.path.basename(disc['path']))
+                    export_clean.write(content)
         elif is_disc == "HDDVD":
             discs = await parse.get_hddvd_info(discs, meta)
             export = open(f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO.txt", 'w', newline="", encoding='utf-8')
