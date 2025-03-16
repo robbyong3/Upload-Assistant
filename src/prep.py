@@ -731,12 +731,8 @@ class Prep():
         elif is_disc == "HDDVD":
             discs = await parse.get_hddvd_info(discs, meta)
 
-            # Write the main combined MediaInfo file
-            with open(f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO.txt", 'w', newline="", encoding='utf-8') as export:
-                export.write(discs[0]['evo_mi'])
-
             # Create a clean path version
-            with open(f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO_CLEANPATH.txt", 'w', newline="", encoding='utf-8') as export_clean:
+            with open(f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO.txt", 'w', newline="", encoding='utf-8') as export_clean:
                 # Replace paths with basename
                 clean_content = discs[0]['evo_mi']
                 for evo_data in discs[0].get('evo_files', []):
@@ -751,9 +747,15 @@ class Prep():
                     evo_mi_path = f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO_{sanitized_filename}.txt"
 
                     with open(evo_mi_path, 'w', newline="", encoding='utf-8') as export:
-                        export.write(evo_data['mediainfo'])
+                        clean_content = evo_data['mediainfo']
+                        clean_content = clean_content.replace(evo_data['path'], os.path.basename(evo_data['path']))
+                        for path_segment in os.path.dirname(evo_data['path']).split(os.sep):
+                            if path_segment and len(path_segment) > 3:  # Skip very short segments (like drive letters)
+                                clean_content = clean_content.replace(path_segment, "***")
 
-                    console.print(f"[green]MediaInfo for {filename} exported.")
+                        export.write(clean_content)
+
+                    console.print(f"[green]MediaInfo for {filename} exported with paths sanitized.")
         discs = sorted(discs, key=lambda d: d['name'])
         return is_disc, videoloc, bdinfo, discs
 
