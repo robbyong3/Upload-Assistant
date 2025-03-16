@@ -301,12 +301,19 @@ async def combine_dvd_mediainfo(vob_mi, ifo_mi, output_path, disc_size=None):
     if "General" in ifo_sections:
         merged_sections["General"] = ifo_sections["General"].copy()
 
+        # Find and modify File size line (don't remove it)
+        if disc_size is not None:
+            for i, line in enumerate(merged_sections["General"]):
+                if line.strip().startswith("File size"):
+                    # Replace the File size line with the disc size value
+                    merged_sections["General"][i] = f"File size                                : {disc_size} GiB"
+                    break
+            # If no File size found, add it
+            if not any(line.strip().startswith("File size") for line in merged_sections["General"]):
+                merged_sections["General"].append(f"File size                                : {disc_size} GiB")
+
         # Always take "Overall bit rate" from VOB if available
         if "General" in vob_sections:
-            # Find and remove "File size" from General section to replace it later
-            merged_sections["General"] = [line for line in merged_sections["General"]
-                                          if not line.strip().startswith("File size")]
-
             # Find Overall bit rate in VOB
             overall_bit_rate = None
             for line in vob_sections["General"]:
@@ -330,26 +337,25 @@ async def combine_dvd_mediainfo(vob_mi, ifo_mi, output_path, disc_size=None):
 
                 if ':' in vob_line:
                     vob_key = vob_line.split(':', 1)[0].strip()
-                    if vob_key not in ifo_lines and vob_key != "File size":  # Skip File size as we'll replace it
+                    # Skip File size as we've already handled it
+                    if vob_key not in ifo_lines and vob_key != "File size":
                         merged_sections["General"].append(vob_line)
 
-        # Add Disc size if meta is provided
-        if disc_size and disc_size is not None:
-            disc_size = disc_size
-            merged_sections["General"].append(f"Disc size                                : {disc_size} GiB")
-
+    # For VOB General section when no IFO is available:
     elif "General" in vob_sections:
         # If no IFO General section, use VOB
         merged_sections["General"] = vob_sections["General"].copy()
 
-        # Replace File size with Disc size if meta is provided
-        if disc_size and disc_size is not None:
-            disc_size = disc_size
-            # Remove any existing File size lines
-            merged_sections["General"] = [line for line in merged_sections["General"]
-                                          if not line.strip().startswith("File size")]
-            # Add Disc size
-            merged_sections["General"].append(f"Disc size                                : {disc_size} GiB")
+        # Update File size with disc size value if provided
+        if disc_size is not None:
+            for i, line in enumerate(merged_sections["General"]):
+                if line.strip().startswith("File size"):
+                    # Replace the File size line with the disc size value
+                    merged_sections["General"][i] = f"File size                                : {disc_size} GiB"
+                    break
+            # If no File size found, add it
+            if not any(line.strip().startswith("File size") for line in merged_sections["General"]):
+                merged_sections["General"].append(f"File size                                : {disc_size} GiB")
 
     # For all other sections, add VOB sections first
     for section, content in vob_sections.items():
