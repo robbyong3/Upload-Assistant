@@ -681,9 +681,117 @@ class DiscParse():
                                             console.print(updated_block)
                                     break  # Stop processing once the correct block is modified
 
+                            chapters = selected_playlist.get("chapters", [])
+                            if chapters:
+                                console.print("[yellow]Adding chapter information to MediaInfo...")
+
+                                # Find the Menu block or create a new one if it doesn't exist
+                                menu_block_index = -1
+                                for i, block in enumerate(mediainfo_blocks):
+                                    if block.strip().startswith("Menu"):
+                                        menu_block_index = i
+                                        break
+
+                                # Create the Menu block content
+                                menu_content = "Menu"
+                                menu_content += "\nFormat                                   : HD DVD-Video"
+                                menu_content += "\n"  # Ensure there's a newline
+
+                                # Format and add each chapter
+                                for chapter in chapters:
+                                    chapter_time = chapter.get("titleTimeBegin", "00:00:00:00")
+                                    chapter_name = chapter.get("displayName", "")
+
+                                    # Convert chapter time from HH:MM:SS:FF to HH:MM:SS.mmm format for MediaInfo
+                                    parts = chapter_time.split(":")
+                                    if len(parts) == 4:
+                                        hours, minutes, seconds, frames = map(int, parts)
+                                        # Convert frames to milliseconds (assuming 24 frames per second)
+                                        milliseconds = int((frames / 24) * 1000)
+
+                                        # Format with exactly 3 digits for milliseconds to ensure proper alignment
+                                        formatted_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+
+                                        # Create properly spaced chapter entry - exactly 42 characters before the colon
+                                        chapter_entry = formatted_time.ljust(42)
+
+                                        # Add formatted chapter entry
+                                        if chapter_name:
+                                            menu_content += f"{chapter_entry}: {chapter_name}\n"
+                                        else:
+                                            menu_content += f"{chapter_entry}: Chapter {chapters.index(chapter) + 1}\n"
+
+                                # If a Menu block was found, update it
+                                if menu_block_index != -1:
+                                    mediainfo_blocks[menu_block_index] = menu_content
+                                else:
+                                    # If no Menu block exists, add it to the end of the mediainfo_blocks
+                                    mediainfo_blocks.append(menu_content)
+
                             # Debugging: Log if no matching block was found
                             if not found_block:
                                 console.print(f"[Debug] No matching MediaInfo block found for Subtitle Track {track_number}.")
+
+                        # Rejoin the modified MediaInfo blocks
+                        # Get all Audio sections in their original order
+                        audio_sections = []
+                        for i, block in enumerate(mediainfo_blocks):
+                            if block.strip().startswith("Audio"):
+                                audio_sections.append((i, block))
+
+                        # Get all Text sections in their original order
+                        text_sections = []
+                        for i, block in enumerate(mediainfo_blocks):
+                            if block.strip().startswith("Text"):
+                                text_sections.append((i, block))
+
+                        # Find Menu section
+                        menu_section = None
+                        for block in mediainfo_blocks:
+                            if block.strip().startswith("Menu"):
+                                menu_section = block
+                                break
+
+                        # Other blocks that don't fit the above categories
+                        other_blocks = []
+                        for i, block in enumerate(mediainfo_blocks):
+                            if (not block.strip().startswith("General") and
+                                    not block.strip().startswith("Video") and
+                                    not block.strip().startswith("Audio") and
+                                    not block.strip().startswith("Text") and
+                                    not block.strip().startswith("Menu")):
+                                other_blocks.append(block)
+
+                        # Define the standard MediaInfo section order
+                        standard_section_order = ["General", "Video"]
+
+                        # Build ordered MediaInfo blocks based on standard order
+                        ordered_blocks = []
+
+                        # First add sections in the standard order
+                        for section_type in standard_section_order:
+                            for block in mediainfo_blocks:
+                                if block.strip().startswith(section_type):
+                                    ordered_blocks.append(block)
+
+                        # Then add Audio sections in their original order
+                        for _, block in sorted(audio_sections, key=lambda x: x[0]):
+                            ordered_blocks.append(block)
+
+                        # Add Text sections in their original order
+                        for _, block in sorted(text_sections, key=lambda x: x[0]):
+                            ordered_blocks.append(block)
+
+                        # Add Menu section if it exists
+                        if menu_section:
+                            ordered_blocks.append(menu_section)
+
+                        # Add any other sections
+                        for block in other_blocks:
+                            ordered_blocks.append(block)
+
+                        # Replace mediainfo_blocks with the ordered blocks
+                        mediainfo_blocks = ordered_blocks
 
                         # Rejoin the modified MediaInfo blocks
                         modified_mediainfo = "\n\n".join(mediainfo_blocks)
