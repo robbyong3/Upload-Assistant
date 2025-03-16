@@ -730,9 +730,30 @@ class Prep():
                     export_clean.write(content)
         elif is_disc == "HDDVD":
             discs = await parse.get_hddvd_info(discs, meta)
-            export = open(f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO.txt", 'w', newline="", encoding='utf-8')
-            export.write(discs[0]['evo_mi'])
-            export.close()
+
+            # Write the main combined MediaInfo file
+            with open(f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO.txt", 'w', newline="", encoding='utf-8') as export:
+                export.write(discs[0]['evo_mi'])
+
+            # Create a clean path version
+            with open(f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO_CLEANPATH.txt", 'w', newline="", encoding='utf-8') as export_clean:
+                # Replace paths with basename
+                clean_content = discs[0]['evo_mi']
+                for evo_data in discs[0].get('evo_files', []):
+                    clean_content = clean_content.replace(evo_data['path'], os.path.basename(evo_data['path']))
+                export_clean.write(clean_content)
+
+            # Write individual MediaInfo files for each EVO file
+            if 'evo_files' in discs[0]:
+                for evo_data in discs[0]['evo_files']:
+                    filename = evo_data['file']
+                    sanitized_filename = filename.replace(' ', '_').replace('.', '_')
+                    evo_mi_path = f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO_{sanitized_filename}.txt"
+
+                    with open(evo_mi_path, 'w', newline="", encoding='utf-8') as export:
+                        export.write(evo_data['mediainfo'])
+
+                    console.print(f"[green]MediaInfo for {filename} exported.")
         discs = sorted(discs, key=lambda d: d['name'])
         return is_disc, videoloc, bdinfo, discs
 

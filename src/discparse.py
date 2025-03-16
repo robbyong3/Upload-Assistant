@@ -14,6 +14,7 @@ from langcodes import Language
 from collections import defaultdict
 from src.console import console
 from data.config import config
+from src.exportmi import combine_hddvd_mediainfo
 
 
 class DiscParse():
@@ -551,139 +552,148 @@ class DiscParse():
                     # Filter out non-existent files
                     existing_evo_files = [evo for evo in evo_files if os.path.exists(evo)]
 
-                    if len(existing_evo_files) >= 2:
-                        # Select the second .EVO file
-                        selected_evo_path = existing_evo_files[1]
-                    else:
-                        # Fallback to the largest file
-                        selected_evo_path = max(
-                            existing_evo_files,
-                            key=os.path.getsize
+                    if existing_evo_files:
+                        # Create a list to store MediaInfo data for each EVO file
+                        mediainfo_data = []
+
+                        # Generate MediaInfo for each EVO file
+                        for evo_file in existing_evo_files:
+                            evo_filename = os.path.basename(evo_file)
+                            console.print(f"[yellow]Generating MediaInfo for {evo_filename}...")
+
+                            # Generate MediaInfo
+                            evo_mediainfo = MediaInfo.parse(evo_file, output='STRING', full=False)
+
+                            # Add to the list
+                            mediainfo_data.append({
+                                'file': evo_filename,
+                                'path': evo_file,
+                                'mediainfo': evo_mediainfo
+                            })
+
+                        # Store the MediaInfo data in the disc object
+                        each['evo_files'] = mediainfo_data
+
+                        # Combine all MediaInfo files
+                        console.print("[yellow]Combining MediaInfo from all EVO files...")
+                        combined_mediainfo = await combine_hddvd_mediainfo(
+                            mediainfo_data,
+                            total_size,
+                            self.format_duration(selected_playlist['titleDuration'])
                         )
 
-                    if not os.path.exists(selected_evo_path):
-                        raise FileNotFoundError(f"Selected .EVO file {selected_evo_path} does not exist.")
+                        # Now modify the combined MediaInfo with additional details
+                        modified_mediainfo = combined_mediainfo
 
-                    # Parse MediaInfo for the largest .EVO file
-                    original_mediainfo = MediaInfo.parse(selected_evo_path, output='STRING', full=False)
+                        # Split MediaInfo into blocks for easier manipulation
+                        mediainfo_blocks = modified_mediainfo.replace("\r\n", "\n").split("\n\n")
 
-                    modified_mediainfo = re.sub(
-                        r"File size\s+:\s+[^\r\n]+",
-                        f"File size                                : {total_size / (1024 ** 3):.2f} GiB",
-                        original_mediainfo
-                    )
-                    modified_mediainfo = re.sub(
-                        r"Duration\s+:\s+[^\r\n]+",
-                        f"Duration                                 : {self.format_duration(selected_playlist['titleDuration'])}",
-                        modified_mediainfo
-                    )
+                        # Add language details to the correct "Audio #X" block
+                        audio_tracks = selected_playlist.get("audioTracks", [])
+                        for audio_track in audio_tracks:
+                            # Extract track information from the playlist
+                            track_number = int(audio_track.get("track", "1"))  # Ensure track number is an integer
+                            language = audio_track.get("language", "")
+                            langcode = audio_track.get("langcode", "")
+                            description = audio_track.get("description", "")
 
-                    # Split MediaInfo into blocks for easier manipulation
-                    mediainfo_blocks = modified_mediainfo.replace("\r\n", "\n").split("\n\n")
+                            # Debugging: Print the current audio track information
+                            console.print(f"[Debug] Processing Audio Track: {track_number}")
+                            console.print(f"        Language: {language}")
+                            console.print(f"        Langcode: {langcode}")
 
-                    # Add language details to the correct "Audio #X" block
-                    audio_tracks = selected_playlist.get("audioTracks", [])
-                    for audio_track in audio_tracks:
-                        # Extract track information from the playlist
-                        track_number = int(audio_track.get("track", "1"))  # Ensure track number is an integer
-                        language = audio_track.get("language", "")
-                        langcode = audio_track.get("langcode", "")
-                        description = audio_track.get("description", "")
+                            # Find the corresponding "Audio #X" block in MediaInfo
+                            found_block = False
+                            for i, block in enumerate(mediainfo_blocks):
+                                # console.print(mediainfo_blocks)
+                                if re.match(rf"^\s*Audio #\s*{track_number}\b.*", block):  # Match the correct Audio # block
+                                    found_block = True
+                                    console.print(f"[Debug] Found matching MediaInfo block for Audio Track {track_number}.")
 
-                        # Debugging: Print the current audio track information
-                        console.print(f"[Debug] Processing Audio Track: {track_number}")
-                        console.print(f"        Language: {language}")
-                        console.print(f"        Langcode: {langcode}")
+                                    # Check if Language is already present
+                                    if language and not re.search(rf"Language\s+:\s+{re.escape(language)}", block):
+                                        # Locate "Compression mode" line
+                                        compression_mode_index = block.find("Compression mode")
+                                        if compression_mode_index != -1:
+                                            # Find the end of the "Compression mode" line
+                                            line_end = block.find("\n", compression_mode_index)
+                                            if line_end == -1:
+                                                line_end = len(block)  # If no newline, append to the end of the block
 
-                        # Find the corresponding "Audio #X" block in MediaInfo
-                        found_block = False
-                        for i, block in enumerate(mediainfo_blocks):
-                            # console.print(mediainfo_blocks)
-                            if re.match(rf"^\s*Audio #\s*{track_number}\b.*", block):  # Match the correct Audio # block
-                                found_block = True
-                                console.print(f"[Debug] Found matching MediaInfo block for Audio Track {track_number}.")
+                                            # Construct the new Language entry
+                                            language_entry = f"\nLanguage                                 : {language}"
 
-                                # Check if Language is already present
-                                if language and not re.search(rf"Language\s+:\s+{re.escape(language)}", block):
-                                    # Locate "Compression mode" line
-                                    compression_mode_index = block.find("Compression mode")
-                                    if compression_mode_index != -1:
-                                        # Find the end of the "Compression mode" line
-                                        line_end = block.find("\n", compression_mode_index)
-                                        if line_end == -1:
-                                            line_end = len(block)  # If no newline, append to the end of the block
+                                            # Insert the new entry
+                                            updated_block = (
+                                                block[:line_end]  # Up to the end of the "Compression mode"
+                                                + language_entry
+                                                + block[line_end:]  # Rest of the block
+                                            )
+                                            mediainfo_blocks[i] = updated_block
+                                            console.print(f"[Debug] Updated MediaInfo Block for Audio Track {track_number}:")
+                                            console.print(updated_block)
+                                    break  # Stop processing once the correct block is modified
 
-                                        # Construct the new Language entry
-                                        language_entry = f"\nLanguage                                 : {language}"
+                            # Debugging: Log if no matching block was found
+                            if not found_block:
+                                console.print(f"[Debug] No matching MediaInfo block found for Audio Track {track_number}.")
 
-                                        # Insert the new entry
-                                        updated_block = (
-                                            block[:line_end]  # Up to the end of the "Compression mode"
-                                            + language_entry
-                                            + block[line_end:]  # Rest of the block
-                                        )
-                                        mediainfo_blocks[i] = updated_block
-                                        console.print(f"[Debug] Updated MediaInfo Block for Audio Track {track_number}:")
-                                        console.print(updated_block)
-                                break  # Stop processing once the correct block is modified
+                        # Add subtitle track languages to the correct "Text #X" block
+                        subtitle_tracks = selected_playlist.get("subtitleTracks", [])
+                        for subtitle_track in subtitle_tracks:
+                            track_number = int(subtitle_track.get("track", "1"))  # Ensure track number is an integer
+                            language = subtitle_track.get("language", "")
+                            langcode = subtitle_track.get("langcode", "")
 
-                        # Debugging: Log if no matching block was found
-                        if not found_block:
-                            console.print(f"[Debug] No matching MediaInfo block found for Audio Track {track_number}.")
+                            # Debugging: Print current subtitle track info
+                            console.print(f"[Debug] Processing Subtitle Track: {track_number}")
+                            console.print(f"        Language: {language}")
+                            console.print(f"        Langcode: {langcode}")
 
-                    # Add subtitle track languages to the correct "Text #X" block
-                    subtitle_tracks = selected_playlist.get("subtitleTracks", [])
-                    for subtitle_track in subtitle_tracks:
-                        track_number = int(subtitle_track.get("track", "1"))  # Ensure track number is an integer
-                        language = subtitle_track.get("language", "")
-                        langcode = subtitle_track.get("langcode", "")
+                            # Find the corresponding "Text #X" block
+                            found_block = False
+                            for i, block in enumerate(mediainfo_blocks):
+                                if re.match(rf"^\s*Text #\s*{track_number}\b", block):  # Match the correct Text # block
+                                    found_block = True
+                                    console.print(f"[Debug] Found matching MediaInfo block for Subtitle Track {track_number}.")
 
-                        # Debugging: Print current subtitle track info
-                        console.print(f"[Debug] Processing Subtitle Track: {track_number}")
-                        console.print(f"        Language: {language}")
-                        console.print(f"        Langcode: {langcode}")
+                                    # Insert Language details if not already present
+                                    if language and not re.search(rf"Language\s+:\s+{re.escape(language)}", block):
+                                        # Locate the "Format" line
+                                        format_index = block.find("Format")
+                                        if format_index != -1:
+                                            # Find the end of the "Format" line
+                                            insertion_point = block.find("\n", format_index)
+                                            if insertion_point == -1:
+                                                insertion_point = len(block)  # If no newline, append to the end of the block
 
-                        # Find the corresponding "Text #X" block
-                        found_block = False
-                        for i, block in enumerate(mediainfo_blocks):
-                            if re.match(rf"^\s*Text #\s*{track_number}\b", block):  # Match the correct Text # block
-                                found_block = True
-                                console.print(f"[Debug] Found matching MediaInfo block for Subtitle Track {track_number}.")
+                                            # Construct the new Language entry
+                                            language_entry = f"\nLanguage                                 : {language}"
 
-                                # Insert Language details if not already present
-                                if language and not re.search(rf"Language\s+:\s+{re.escape(language)}", block):
-                                    # Locate the "Format" line
-                                    format_index = block.find("Format")
-                                    if format_index != -1:
-                                        # Find the end of the "Format" line
-                                        insertion_point = block.find("\n", format_index)
-                                        if insertion_point == -1:
-                                            insertion_point = len(block)  # If no newline, append to the end of the block
+                                            # Insert the new entry
+                                            updated_block = (
+                                                block[:insertion_point]  # Up to the end of the "Format" line
+                                                + language_entry
+                                                + block[insertion_point:]  # Rest of the block
+                                            )
+                                            mediainfo_blocks[i] = updated_block
+                                            console.print(f"[Debug] Updated MediaInfo Block for Subtitle Track {track_number}:")
+                                            console.print(updated_block)
+                                    break  # Stop processing once the correct block is modified
 
-                                        # Construct the new Language entry
-                                        language_entry = f"\nLanguage                                 : {language}"
+                            # Debugging: Log if no matching block was found
+                            if not found_block:
+                                console.print(f"[Debug] No matching MediaInfo block found for Subtitle Track {track_number}.")
 
-                                        # Insert the new entry
-                                        updated_block = (
-                                            block[:insertion_point]  # Up to the end of the "Format" line
-                                            + language_entry
-                                            + block[insertion_point:]  # Rest of the block
-                                        )
-                                        mediainfo_blocks[i] = updated_block
-                                        console.print(f"[Debug] Updated MediaInfo Block for Subtitle Track {track_number}:")
-                                        console.print(updated_block)
-                                break  # Stop processing once the correct block is modified
+                        # Rejoin the modified MediaInfo blocks
+                        modified_mediainfo = "\n\n".join(mediainfo_blocks)
 
-                        # Debugging: Log if no matching block was found
-                        if not found_block:
-                            console.print(f"[Debug] No matching MediaInfo block found for Subtitle Track {track_number}.")
+                        # Update the dictionary with the modified MediaInfo and file path
+                        each['evo_mi'] = modified_mediainfo
+                        each['largest_evo'] = existing_evo_files[0]
 
-                    # Rejoin the modified MediaInfo blocks
-                    modified_mediainfo = "\n\n".join(mediainfo_blocks)
-
-                    # Update the dictionary with the modified MediaInfo and file path
-                    each['evo_mi'] = modified_mediainfo
-                    each['largest_evo'] = selected_evo_path
+                    else:
+                        console.print("[bold red]No valid EVO files found in the playlist.")
 
                 # Save playlist information in meta under HDDVD_PLAYLIST
                 meta["HDDVD_PLAYLIST"] = selected_playlist

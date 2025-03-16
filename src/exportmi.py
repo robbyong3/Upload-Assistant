@@ -439,3 +439,147 @@ async def combine_dvd_mediainfo(vob_mi, ifo_mi, output_path, disc_size=None):
         f.write('\n'.join(combined_text))
 
     return '\n'.join(combined_text)
+
+
+async def combine_hddvd_mediainfo(evo_mediainfo_list, total_size, duration):
+    # Parse MediaInfo texts into structured sections
+    def parse_mediainfo(mi_text):
+        sections = {}
+        current_section = None
+        current_content = []
+
+        lines = mi_text.splitlines()
+        i = 0
+
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # Skip empty lines
+            if not line:
+                i += 1
+                continue
+
+            # Check if this is a section header
+            if ":" not in line and line and not line.startswith(" "):
+                if current_section:
+                    # Store previous section
+                    sections[current_section] = current_content
+
+                # Start new section
+                current_section = line
+                current_content = []
+            else:
+                # Add content to current section
+                if current_section:
+                    current_content.append(line)
+
+            i += 1
+
+        # Add the last section
+        if current_section:
+            sections[current_section] = current_content
+
+        return sections
+
+    # Use the first EVO file's MediaInfo as base
+    first_mi = evo_mediainfo_list[0]['mediainfo']
+
+    # Parse sections from base MediaInfo
+    base_sections = parse_mediainfo(first_mi)
+
+    # Parse each additional EVO MediaInfo
+    additional_sections = []
+    for evo_data in evo_mediainfo_list[1:]:
+        additional_sections.append(parse_mediainfo(evo_data['mediainfo']))
+
+    # Modify the General section to use the total size and duration
+    if "General" in base_sections:
+        # Replace file size with total size
+        base_sections["General"] = [line for line in base_sections["General"]
+                                    if not line.strip().startswith("File size")]
+        base_sections["General"].append(f"File size                                : {total_size / (1024 ** 3):.2f} GiB")
+
+        # Replace duration with the playlist duration
+        base_sections["General"] = [line for line in base_sections["General"]
+                                    if not line.strip().startswith("Duration")]
+        # Format duration for MediaInfo style
+        formatted_duration = duration
+        base_sections["General"].append(f"Duration                                 : {formatted_duration}")
+
+    # Add unique audio/subtitle tracks from other EVO files
+    for sections in additional_sections:
+        for section, content in sections.items():
+            # Skip General section as it's already handled
+            if section == "General" or section == "Video":
+                continue
+
+            # If it's a new section type, add it
+            if section not in base_sections:
+                base_sections[section] = content
+                continue
+
+            # For existing section types, check if it's a new instance
+            if section.startswith("Audio") or section.startswith("Text"):
+                # Extract ID or other uniquely identifying information
+                section_id = None
+                for line in content:
+                    if line.strip().startswith("ID"):
+                        section_id = line
+                        break
+
+                # Check if this ID already exists in base_sections
+                exists = False
+                for existing_content in base_sections.values():
+                    for line in existing_content:
+                        if line == section_id:
+                            exists = True
+                            break
+                    if exists:
+                        break
+
+                # If it's a new ID, create a new section
+                if not exists and section_id:
+                    # Find the highest existing section number
+                    section_prefix = section.split(" #")[0]
+                    existing_sections = [s for s in base_sections.keys() if s.startswith(section_prefix)]
+                    max_num = 0
+                    for s in existing_sections:
+                        try:
+                            num = int(s.split(" #")[1])
+                            max_num = max(max_num, num)
+                        except (IndexError, ValueError):
+                            pass
+
+                    # Create a new section with the next number
+                    new_section = f"{section_prefix} #{max_num + 1}"
+                    base_sections[new_section] = content
+
+    # Build the combined MediaInfo text
+    combined_text = []
+
+    # Standard section order
+    section_order = [
+        "General",
+        "Video"
+    ]
+
+    # Add audio, text, and other sections in order
+    audio_sections = sorted([s for s in base_sections.keys() if s.startswith("Audio")])
+    text_sections = sorted([s for s in base_sections.keys() if s.startswith("Text")])
+
+    section_order.extend(audio_sections)
+    section_order.extend(text_sections)
+    section_order.append("Menu")
+
+    # Other sections not in standard order
+    other_sections = [s for s in base_sections.keys() if s not in section_order and s in base_sections]
+    section_order.extend(other_sections)
+
+    # Build output text in order
+    for section in section_order:
+        if section in base_sections:
+            combined_text.append(section)
+            combined_text.extend(base_sections[section])
+            combined_text.append("")  # Empty line between sections
+
+    return '\n'.join(combined_text)
