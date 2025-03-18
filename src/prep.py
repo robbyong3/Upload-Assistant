@@ -143,11 +143,13 @@ class Prep():
                 meta['search_year'] = guessit(meta['discs'][0]['path'])['year']
             except Exception:
                 meta['search_year'] = ""
-            if not meta.get('edit', False):
-                mi = await exportInfo(meta['discs'][0]['largest_evo'], False, meta['uuid'], meta['base_dir'], export_text=False)
-                meta['mediainfo'] = mi
-            else:
-                mi = meta['mediainfo']
+            try:
+                with open(f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO.json", 'r', encoding='utf-8') as f:
+                    mi = json.load(f)
+                    meta['mediainfo'] = mi
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                console.print(f"[red]Error loading MediaInfo JSON: {e}")
+                mi = None
             meta['resolution'] = await self.get_resolution(guessit(video), meta['uuid'], base_dir)
             meta['sd'] = await self.is_sd(meta['resolution'])
 
@@ -731,13 +733,18 @@ class Prep():
         elif is_disc == "HDDVD":
             discs = await parse.get_hddvd_info(discs, meta)
 
+            console.print("[yellow]Exporting MediaInfo for HD-DVD...")
+
             # Create a clean path version
             with open(f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO.txt", 'w', newline="", encoding='utf-8') as export_clean:
                 # Replace paths with basename
                 clean_content = discs[0]['evo_mi']
                 for evo_data in discs[0].get('evo_files', []):
-                    clean_content = clean_content.replace(evo_data['path'], os.path.basename(evo_data['path']))
+                    original_path = evo_data['path']
+                    new_path = f"{meta['uuid']}"
+                    clean_content = clean_content.replace(original_path, new_path)
                 export_clean.write(clean_content)
+                export_clean.flush()
 
             # Write individual MediaInfo files for each EVO file
             if 'evo_files' in discs[0]:
@@ -751,9 +758,9 @@ class Prep():
                         clean_content = clean_content.replace(evo_data['path'], os.path.basename(evo_data['path']))
                         for path_segment in os.path.dirname(evo_data['path']).split(os.sep):
                             if path_segment and len(path_segment) > 3:  # Skip very short segments (like drive letters)
-                                clean_content = clean_content.replace(path_segment, "***")
+                                cleaned_content = clean_content.replace(path_segment, "***")
 
-                        export.write(clean_content)
+                        export.write(cleaned_content)
 
                     console.print(f"[green]MediaInfo for {filename} exported with paths sanitized.")
         discs = sorted(discs, key=lambda d: d['name'])

@@ -554,6 +554,48 @@ async def combine_hddvd_mediainfo(evo_mediainfo_list, total_size, duration):
                     new_section = f"{section_prefix} #{max_num + 1}"
                     base_sections[new_section] = content
 
+    for section_name, content in list(base_sections.items()):
+        if section_name.startswith("Audio"):
+            # Check if the section has a Maximum bit rate but no Bit rate
+            has_max_bitrate = False
+            max_bitrate_value = None
+            has_bitrate = False
+
+            console.print(f"[yellow]Checking audio section: {section_name}")
+
+            # First pass: detect if we have Maximum bit rate but no Bit rate
+            for line in content:
+                line_text = line.strip()
+                if "Maximum bit rate" in line_text:
+                    has_max_bitrate = True
+                    # Extract the Maximum bit rate value
+                    try:
+                        max_bitrate_value = line_text.split(':', 1)[1].strip()
+                        console.print(f"[yellow]Found Maximum bit rate: {max_bitrate_value}")
+                    except IndexError:
+                        console.print(f"[red]Invalid Maximum bit rate line format: {line_text}")
+                elif "Bit rate" in line_text and "mode" not in line_text.lower():
+                    has_bitrate = True
+                    console.print("[yellow]Found Bit rate already exists")
+
+            # Second pass: add Bit rate line if needed
+            if has_max_bitrate and not has_bitrate and max_bitrate_value:
+                console.print(f"[green]Adding Bit rate line to {section_name} using value: {max_bitrate_value}")
+
+                # Create a new Bit rate line with proper spacing
+                bitrate_line = f"Bit rate                                 : {max_bitrate_value}"
+
+                # Add the new Bit rate line at an appropriate position
+                insertion_point = 0
+                for i, line in enumerate(content):
+                    if "Maximum bit rate" in line.strip():
+                        insertion_point = i + 1
+                        break
+
+                # Insert the new line
+                base_sections[section_name].insert(insertion_point, bitrate_line)
+                console.print(f"[green]Added Bit rate line to {section_name}")
+
     # Build the combined MediaInfo text
     combined_text = []
 

@@ -681,56 +681,64 @@ class DiscParse():
                                             console.print(updated_block)
                                     break  # Stop processing once the correct block is modified
 
-                            chapters = selected_playlist.get("chapters", [])
-                            if chapters:
-                                console.print("[yellow]Adding chapter information to MediaInfo...")
-
-                                # Find the Menu block or create a new one if it doesn't exist
-                                menu_block_index = -1
-                                for i, block in enumerate(mediainfo_blocks):
-                                    if block.strip().startswith("Menu"):
-                                        menu_block_index = i
-                                        break
-
-                                # Create the Menu block content
-                                menu_content = "Menu"
-                                menu_content += "\nFormat                                   : HD DVD-Video"
-                                menu_content += "\n"  # Ensure there's a newline
-
-                                # Format and add each chapter
-                                for chapter in chapters:
-                                    chapter_time = chapter.get("titleTimeBegin", "00:00:00:00")
-                                    chapter_name = chapter.get("displayName", "")
-
-                                    # Convert chapter time from HH:MM:SS:FF to HH:MM:SS.mmm format for MediaInfo
-                                    parts = chapter_time.split(":")
-                                    if len(parts) == 4:
-                                        hours, minutes, seconds, frames = map(int, parts)
-                                        # Convert frames to milliseconds (assuming 24 frames per second)
-                                        milliseconds = int((frames / 24) * 1000)
-
-                                        # Format with exactly 3 digits for milliseconds to ensure proper alignment
-                                        formatted_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
-
-                                        # Create properly spaced chapter entry - exactly 42 characters before the colon
-                                        chapter_entry = formatted_time.ljust(42)
-
-                                        # Add formatted chapter entry
-                                        if chapter_name:
-                                            menu_content += f"{chapter_entry}: {chapter_name}\n"
-                                        else:
-                                            menu_content += f"{chapter_entry}: Chapter {chapters.index(chapter) + 1}\n"
-
-                                # If a Menu block was found, update it
-                                if menu_block_index != -1:
-                                    mediainfo_blocks[menu_block_index] = menu_content
-                                else:
-                                    # If no Menu block exists, add it to the end of the mediainfo_blocks
-                                    mediainfo_blocks.append(menu_content)
-
                             # Debugging: Log if no matching block was found
                             if not found_block:
                                 console.print(f"[Debug] No matching MediaInfo block found for Subtitle Track {track_number}.")
+
+                        chapters = selected_playlist.get("chapters", [])
+                        console.print(f"[Debug] Found {len(chapters)} chapters in the playlist.")
+                        if chapters:
+                            console.print("[yellow]Adding chapter information to MediaInfo...")
+
+                            # Find the Menu block or create a new one if it doesn't exist
+                            menu_block_index = -1
+                            for i, block in enumerate(mediainfo_blocks):
+                                if block.strip().startswith("Menu"):
+                                    menu_block_index = i
+                                    break
+
+                            # Create the Menu block content
+                            menu_content = "Menu"
+                            menu_content += "\nFormat                                   : HD DVD-Video"
+                            menu_content += "\n"  # Ensure there's a newline
+
+                            # Format and add each chapter
+                            for chapter in chapters:
+                                chapter_time = chapter.get("titleTimeBegin", "00:00:00:00")
+                                chapter_name = chapter.get("displayName", "")
+
+                                # Convert chapter time from HH:MM:SS:FF to HH:MM:SS.mmm format for MediaInfo
+                                parts = chapter_time.split(":")
+                                if len(parts) == 4:
+                                    hours, minutes, seconds, frames = map(int, parts)
+                                    # Convert frames to milliseconds (assuming 24 frames per second)
+                                    milliseconds = int((frames / 24) * 1000)
+
+                                    # Format with exactly 3 digits for milliseconds to ensure proper alignment
+                                    formatted_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+
+                                    # Create properly spaced chapter entry - exactly 42 characters before the colon
+                                    chapter_entry = formatted_time.ljust(42)
+
+                                    # Add formatted chapter entry
+                                    if chapter_name:
+                                        menu_content += f"{chapter_entry}: {chapter_name}\n"
+                                    else:
+                                        menu_content += f"{chapter_entry}: Chapter {chapters.index(chapter) + 1}\n"
+
+                            # If a Menu block was found, update it
+                            if menu_block_index != -1:
+                                mediainfo_blocks[menu_block_index] = menu_content
+                            else:
+                                # If no Menu block exists, add it to the end of the mediainfo_blocks
+                                mediainfo_blocks.append(menu_content)
+
+                            # Add more debug output to confirm chapter creation
+                            console.print(f"[Debug] Created Menu block with {len(chapters)} chapters")
+                            console.print("[Debug] First few chapter entries:")
+                            chapter_entries = menu_content.strip().split('\n')[2:5]  # Skip header lines, show first 3 chapters
+                            for entry in chapter_entries:
+                                console.print(f"[Debug]   {entry}")
 
                         # Rejoin the modified MediaInfo blocks
                         # Get all Audio sections in their original order
@@ -796,9 +804,108 @@ class DiscParse():
                         # Rejoin the modified MediaInfo blocks
                         modified_mediainfo = "\n\n".join(mediainfo_blocks)
 
+                        # Add a final verification
+                        menu_in_result = "Menu" in modified_mediainfo
+
+                        # Quick check of the actual content - first 100 chars of the Menu section if found
+                        if menu_in_result:
+                            menu_start = modified_mediainfo.find("Menu")
+                            menu_extract = modified_mediainfo[menu_start:menu_start+200].replace('\n', '\\n')
+                            console.print(f"[Debug] Menu section preview: {menu_extract}")
+
                         # Update the dictionary with the modified MediaInfo and file path
                         each['evo_mi'] = modified_mediainfo
                         each['largest_evo'] = existing_evo_files[0]
+
+                        # Now create a JSON version of the MediaInfo
+                        try:
+                            # Parse the combined MediaInfo text back to JSON format
+                            json_mediainfo = MediaInfo.parse(existing_evo_files[0], output='JSON')
+                            json_data = json.loads(json_mediainfo)
+
+                            # Create a copy of the parsed data to modify
+                            combined_json = json_data.copy()
+
+                            # Update the general track with combined size and duration
+                            for track in combined_json.get('media', {}).get('track', []):
+                                if track.get('@type') == 'General':
+                                    # Update file size
+                                    track['FileSize'] = str(total_size)
+
+                                    # Update duration if available in the playlist
+                                    if 'titleDuration' in selected_playlist:
+                                        duration_str = self.format_duration(selected_playlist['titleDuration'])
+                                        # Convert to milliseconds for JSON format
+                                        try:
+                                            h, m, s = map(int, duration_str.split(':'))
+                                            duration_ms = ((h * 60 + m) * 60 + s) * 1000
+                                            track['Duration'] = str(duration_ms)
+                                        except ValueError:
+                                            pass
+
+                                    # Add source file information
+                                    file_list = [os.path.basename(evo['path']) for evo in mediainfo_data]
+                                    track['SourceFiles'] = ', '.join(file_list)
+                                    break
+
+                            # Add language information to audio tracks
+                            for audio_track in selected_playlist.get('audioTracks', []):
+                                track_number = int(audio_track.get('track', '1'))
+                                language = audio_track.get('language', '')
+
+                                # Find matching track in JSON
+                                for track in combined_json.get('media', {}).get('track', []):
+                                    if track.get('@type') == 'Audio' and int(track.get('StreamOrder', '0')) == track_number - 1:
+                                        if language:
+                                            track['Language'] = language
+
+                            # Add language information to subtitle tracks
+                            for subtitle_track in selected_playlist.get('subtitleTracks', []):
+                                track_number = int(subtitle_track.get('track', '1'))
+                                language = subtitle_track.get('language', '')
+
+                                # Find matching track in JSON
+                                for track in combined_json.get('media', {}).get('track', []):
+                                    if track.get('@type') == 'Text' and int(track.get('StreamOrder', '0')) == track_number - 1:
+                                        if language:
+                                            track['Language'] = language
+
+                            # Add chapter information
+                            if selected_playlist.get('chapters'):
+                                chapters_track = {
+                                    '@type': 'Menu',
+                                    'Format': 'HD DVD-Video',
+                                    'Chapters': []
+                                }
+
+                                for chapter in selected_playlist.get('chapters', []):
+                                    chapter_time = chapter.get('titleTimeBegin', '00:00:00:00')
+                                    chapter_name = chapter.get('displayName', '') or f"Chapter {selected_playlist['chapters'].index(chapter) + 1}"
+
+                                    # Convert HH:MM:SS:FF to milliseconds
+                                    parts = chapter_time.split(':')
+                                    if len(parts) == 4:
+                                        hours, minutes, seconds, frames = map(int, parts)
+                                        milliseconds = ((hours * 60 + minutes) * 60 + seconds) * 1000 + int((frames / 24) * 1000)
+
+                                        chapters_track['Chapters'].append({
+                                            'time': milliseconds,
+                                            'name': chapter_name
+                                        })
+
+                                # Add chapters track if it has entries
+                                if chapters_track['Chapters']:
+                                    combined_json['media']['track'].append(chapters_track)
+
+                            # Write JSON MediaInfo to file
+                            json_path = f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO.json"
+                            with open(json_path, 'w', encoding='utf-8') as json_file:
+                                json.dump(combined_json, json_file, indent=2)
+
+                            console.print(f"[green]MediaInfo JSON exported to {json_path}")
+
+                        except Exception as e:
+                            console.print(f"[red]Error creating JSON MediaInfo: {str(e)}")
 
                     else:
                         console.print("[bold red]No valid EVO files found in the playlist.")
