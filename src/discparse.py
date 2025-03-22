@@ -755,13 +755,29 @@ class DiscParse():
                         audio_sections = []
                         for i, block in enumerate(mediainfo_blocks):
                             if block.strip().startswith("Audio"):
-                                audio_sections.append((i, block))
+                                # Extract track number from "Audio #X" format
+                                track_match = re.search(r"Audio #(\d+)", block)
+                                if track_match:
+                                    track_num = int(track_match.group(1))
+                                else:
+                                    # For "Audio" without a number, assume it's track 1
+                                    track_num = 1
 
-                        # Get all Text sections in their original order
+                                audio_sections.append((track_num, block))
+
+                        # Get all Text sections with track numbers
                         text_sections = []
                         for i, block in enumerate(mediainfo_blocks):
                             if block.strip().startswith("Text"):
-                                text_sections.append((i, block))
+                                # Extract track number from "Text #X" format
+                                track_match = re.search(r"Text #(\d+)", block)
+                                if track_match:
+                                    track_num = int(track_match.group(1))
+                                else:
+                                    # For "Text" without a number, assume it's track 1
+                                    track_num = 1
+
+                                text_sections.append((track_num, block))
 
                         # Find Menu section
                         menu_section = None
@@ -796,7 +812,7 @@ class DiscParse():
                         for _, block in sorted(audio_sections, key=lambda x: x[0]):
                             ordered_blocks.append(block)
 
-                        # Add Text sections in their original order
+                        # Add Text sections in numerical track order
                         for _, block in sorted(text_sections, key=lambda x: x[0]):
                             ordered_blocks.append(block)
 
