@@ -1150,8 +1150,14 @@ class DiscParse():
 
                                 # Try to convert the language code, with fallback for invalid codes
                                 try:
+                                    if langcode_short in self.language_code_map:
+                                        langcode_short = self.language_code_map[langcode_short]
+
                                     if langcode_short and langcode_short != "*" and langcode_short != "und":
-                                        language_name = Language.get(langcode_short).display_name()
+                                        try:
+                                            language_name = Language.get(langcode_short).display_name()
+                                        except (KeyError, ValueError):
+                                            language_name = langcode_short.upper()
                                     else:
                                         language_name = "Undefined"
                                 except Exception:
