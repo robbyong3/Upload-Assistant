@@ -555,6 +555,32 @@ class DiscParse():
                 evo_files = selected_playlist["evoFiles"]
                 total_size = selected_playlist["totalSize"]
 
+                try:
+                    os.makedirs(f"{meta['base_dir']}/tmp/{meta['uuid']}", exist_ok=True)
+
+                    # Get the original XML string by reading the file
+                    with open(playlist_file, 'r', encoding='utf-8') as f:
+                        xml_content = f.read()
+
+                    # Format the selected playlist for the description, including the XML
+                    playlist_description = self.format_playlist_for_description(
+                        [selected_playlist],
+                        include_xml=True,
+                        xml_string=xml_content
+                    )
+
+                    header = f"{os.path.basename(meta['path'])}\n\n"
+
+                    full_description = header + playlist_description
+                    with open(f"{meta['base_dir']}/tmp/{meta['uuid']}/DESCRIPTION.nfo", 'w', encoding='utf-8', newline="") as f:
+                        f.write(full_description)
+
+                    console.print("[green]Generated description file from HD DVD playlist")
+
+                except Exception as e:
+                    console.print(f"[yellow]Warning: Failed to generate description file: {e}")
+                    console.print(traceback.format_exc())
+
                 # Overwrite mediainfo File size and Duration
                 if evo_files:
                     # Filter out non-existent files
@@ -1307,3 +1333,40 @@ class DiscParse():
             return 0
         hours, minutes, seconds, frames = map(int, parts)
         return hours * 3600 + minutes * 60 + seconds
+
+    def format_playlist_for_description(self, playlist_data, include_xml=True, xml_string=None):
+        """Format playlist data for description - raw XML only mode."""
+        output = []
+
+        # Get the selected title ID to extract only that portion
+        if playlist_data and len(playlist_data) > 0:
+            selected_title_id = playlist_data[0].get("id")
+            selected_title_number = playlist_data[0].get("titleNumber")
+
+            # If we have the XML content and a title ID to look for
+            if include_xml and xml_string and (selected_title_id or selected_title_number):
+                # Try to find and extract just the XML for this specific title
+                try:
+                    # Look for the title element with matching ID or number
+                    id_pattern = rf'<Title[^>]*\bid="{selected_title_id}".*?</Title>'
+                    number_pattern = rf'<Title[^>]*\btitleNumber="{selected_title_number}".*?</Title>'
+
+                    # Try to match the title by ID first, then by number
+                    title_match = re.search(id_pattern, xml_string, re.DOTALL)
+                    if not title_match and selected_title_number:
+                        title_match = re.search(number_pattern, xml_string, re.DOTALL)
+
+                    # If we found a match, just use that title's XML
+                    if title_match:
+                        output.append(title_match.group(0))
+                    else:
+                        # If no specific match found, include the whole XML
+                        output.append(xml_string)
+                except Exception:
+                    # Fallback to the full XML on any error
+                    output.append(xml_string)
+            elif include_xml and xml_string:
+                # No specific title info, include the whole XML
+                output.append(xml_string)
+
+        return "\n".join(output)
