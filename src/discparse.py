@@ -20,6 +20,14 @@ from src.exportmi import combine_hddvd_mediainfo
 class DiscParse():
     def __init__(self):
         self.config = config
+        # Map of non-standard language codes to ISO 639-1 codes
+        self.language_code_map = {
+            "jp": "ja",  # Japanese
+            "se": "sv",  # Swedish
+            "dk": "da",  # Danish
+            "br": "pt",  # Brazilian Portuguese
+            "cz": "cs",  # Czech
+        }
         pass
 
     """
@@ -1176,8 +1184,14 @@ class DiscParse():
                                     langcode_short = langcode
 
                                 try:
+                                    if langcode_short in self.language_code_map:
+                                        langcode_short = self.language_code_map[langcode_short]
+
                                     if langcode_short and langcode_short != "*" and langcode_short != "und":
-                                        language_name = Language.get(langcode_short).display_name()
+                                        try:
+                                            language_name = Language.get(langcode_short).display_name()
+                                        except (KeyError, ValueError):
+                                            language_name = langcode_short.upper()
                                     else:
                                         language_name = "Undefined"
                                 except Exception:
