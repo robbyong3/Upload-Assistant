@@ -958,127 +958,304 @@ class DiscParse():
             tree = ET.parse(file_path)
             root = tree.getroot()
 
-            # Extract namespace
-            namespace = {'ns': 'http://www.dvdforum.org/2005/HDDVDVideo/Playlist'}
+            # Extract namespace - handle both with and without namespace
+            namespace = {}
+            if root.tag.startswith('{'):
+                # Extract namespace from the root tag if it exists
+                ns_uri = root.tag.split('}')[0][1:]
+                namespace = {'ns': ns_uri}
+                find_title_path = ".//ns:Title"
+            else:
+                # No namespace, use direct path
+                find_title_path = ".//Title"
 
-            for title in root.findall(".//ns:Title", namespaces=namespace):
-                title_duration = title.get("titleDuration", "00:00:00:00")
-                duration_seconds = self.timecode_to_seconds(title_duration)
+            # Try different approaches to find Title elements
+            title_elements = []
+            try:
+                # First try with namespace if available
+                if namespace:
+                    title_elements = root.findall(find_title_path, namespaces=namespace)
+                else:
+                    title_elements = root.findall(find_title_path)
 
-                # Skip titles with a duration of 10 minutes or less
-                if duration_seconds <= 600:
-                    continue
+                # If no titles found, try alternative approaches
+                if not title_elements:
+                    # Try direct TitleSet/Title path for TOSHIBA format
+                    title_elements = root.findall(".//TitleSet/Title")
+            except Exception as e:
+                console.print(f"[yellow]Initial title search failed: {e}. Trying alternative methods...")
 
-                title_data = {
-                    "titleNumber": title.get("titleNumber"),
-                    "id": title.get("id"),
-                    "description": title.get("description"),
-                    "titleDuration": title_duration,
-                    "displayName": title.get("displayName"),
-                    "onEnd": title.get("onEnd"),
-                    "alternativeSDDisplayMode": title.get("alternativeSDDisplayMode"),
-                    "primaryClips": [],
-                    "chapters": [],
-                    "audioTracks": [],
-                    "subtitleTracks": [],
-                    "applicationSegments": [],
-                }
+                # Fallback method: search for any element with "Title" in the name
+                for elem in root.iter():
+                    tag = elem.tag
+                    if isinstance(tag, str) and 'Title' in tag.split('}')[-1]:
+                        title_elements.append(elem)
 
-                # Extract PrimaryAudioVideoClip details
-                for clip in title.findall(".//ns:PrimaryAudioVideoClip", namespaces=namespace):
-                    clip_data = {
-                        "src": clip.get("src"),
-                        "titleTimeBegin": clip.get("titleTimeBegin"),
-                        "titleTimeEnd": clip.get("titleTimeEnd"),
-                        "seamless": clip.get("seamless"),
+            console.print(f"[Debug] Found {len(title_elements)} title elements in playlist")
+
+            for title in title_elements:
+                try:
+                    # Get title attributes with fallbacks
+                    title_duration = title.get("titleDuration", "00:00:00:00")
+                    duration_seconds = self.timecode_to_seconds(title_duration)
+
+                    # Skip titles with a duration of 10 minutes or less
+                    if duration_seconds <= 600:
+                        continue
+
+                    title_data = {
+                        "titleNumber": title.get("titleNumber"),
+                        "id": title.get("id"),
+                        "description": title.get("description"),
+                        "titleDuration": title_duration,
+                        "displayName": title.get("displayName"),
+                        "onEnd": title.get("onEnd"),
+                        "alternativeSDDisplayMode": title.get("alternativeSDDisplayMode"),
+                        "primaryClips": [],
+                        "chapters": [],
                         "audioTracks": [],
                         "subtitleTracks": [],
+                        "applicationSegments": [],
                     }
 
-                    # Extract Audio tracks within PrimaryAudioVideoClip
-                    for audio in clip.findall(".//ns:Audio", namespaces=namespace):
-                        clip_data["audioTracks"].append({
-                            "track": audio.get("track"),
-                            "streamNumber": audio.get("streamNumber"),
-                            "mediaAttr": audio.get("mediaAttr"),
-                            "description": audio.get("description"),
-                        })
+                    # Extract PrimaryAudioVideoClip details - handle both namespaced and non-namespaced
+                    clips = []
+                    try:
+                        if namespace:
+                            clips = title.findall(".//ns:PrimaryAudioVideoClip", namespaces=namespace)
+                        else:
+                            clips = title.findall(".//PrimaryAudioVideoClip")
+                    except Exception:
+                        # Try direct search without path
+                        for child in title.iter():
+                            if child.tag.endswith('PrimaryAudioVideoClip'):
+                                clips.append(child)
 
-                    # Extract Subtitle tracks within PrimaryAudioVideoClip
-                    for subtitle in clip.findall(".//ns:Subtitle", namespaces=namespace):
-                        clip_data["subtitleTracks"].append({
-                            "track": subtitle.get("track"),
-                            "streamNumber": subtitle.get("streamNumber"),
-                            "mediaAttr": subtitle.get("mediaAttr"),
-                            "description": subtitle.get("description"),
-                        })
+                    for clip in clips:
+                        clip_data = {
+                            "src": clip.get("src"),
+                            "titleTimeBegin": clip.get("titleTimeBegin"),
+                            "titleTimeEnd": clip.get("titleTimeEnd"),
+                            "seamless": clip.get("seamless"),
+                            "audioTracks": [],
+                            "subtitleTracks": [],
+                        }
 
-                    title_data["primaryClips"].append(clip_data)
+                        # Extract Audio tracks within PrimaryAudioVideoClip
+                        audio_tracks = []
+                        try:
+                            if namespace:
+                                audio_tracks = clip.findall(".//ns:Audio", namespaces=namespace)
+                            else:
+                                audio_tracks = clip.findall(".//Audio")
+                        except Exception:
+                            # Try direct search
+                            for child in clip.iter():
+                                if child.tag.endswith('Audio'):
+                                    audio_tracks.append(child)
 
-                # Extract ChapterList details
-                for chapter in title.findall(".//ns:ChapterList/ns:Chapter", namespaces=namespace):
-                    title_data["chapters"].append({
-                        "displayName": chapter.get("displayName"),
-                        "titleTimeBegin": chapter.get("titleTimeBegin"),
-                    })
+                        for audio in audio_tracks:
+                            clip_data["audioTracks"].append({
+                                "track": audio.get("track"),
+                                "streamNumber": audio.get("streamNumber"),
+                                "mediaAttr": audio.get("mediaAttr"),
+                                "description": audio.get("description"),
+                            })
 
-                # Extract TrackNavigationList details (AudioTracks and SubtitleTracks)
-                for audio_track in title.findall(".//ns:TrackNavigationList/ns:AudioTrack", namespaces=namespace):
-                    langcode = audio_track.get("langcode", "")
-                    # Extract the 2-letter language code before the colon
-                    langcode_short = langcode.split(":")[0] if ":" in langcode else langcode
-                    # Convert the short language code to the full language name
-                    language_name = Language.get(langcode_short).display_name()
+                        # Extract Subtitle tracks - similar approach
+                        subtitle_tracks = []
+                        try:
+                            if namespace:
+                                subtitle_tracks = clip.findall(".//ns:Subtitle", namespaces=namespace)
+                            else:
+                                subtitle_tracks = clip.findall(".//Subtitle")
+                        except Exception:
+                            for child in clip.iter():
+                                if child.tag.endswith('Subtitle'):
+                                    subtitle_tracks.append(child)
 
-                    title_data["audioTracks"].append({
-                        "track": audio_track.get("track"),
-                        "langcode": langcode_short,
-                        "language": language_name,
-                        "description": audio_track.get("description"),
-                        "selectable": audio_track.get("selectable"),
-                    })
+                        for subtitle in subtitle_tracks:
+                            clip_data["subtitleTracks"].append({
+                                "track": subtitle.get("track"),
+                                "streamNumber": subtitle.get("streamNumber"),
+                                "mediaAttr": subtitle.get("mediaAttr"),
+                                "description": subtitle.get("description"),
+                            })
 
-                for subtitle_track in title.findall(".//ns:TrackNavigationList/ns:SubtitleTrack", namespaces=namespace):
-                    langcode = subtitle_track.get("langcode", "")
-                    # Extract the 2-letter language code before the colon
-                    langcode_short = langcode.split(":")[0] if ":" in langcode else langcode
-                    # Convert the short language code to the full language name
-                    language_name = Language.get(langcode_short).display_name()
+                        title_data["primaryClips"].append(clip_data)
 
-                    title_data["subtitleTracks"].append({
-                        "track": subtitle_track.get("track"),
-                        "langcode": langcode_short,
-                        "language": language_name,
-                        "selectable": subtitle_track.get("selectable"),
-                    })
+                    # Extract chapter details with error handling
+                    try:
+                        chapters = []
+                        if namespace:
+                            chapters = title.findall(".//ns:ChapterList/ns:Chapter", namespaces=namespace)
+                        else:
+                            chapters = title.findall(".//ChapterList/Chapter")
 
-                # Extract ApplicationSegment details
-                for app_segment in title.findall(".//ns:ApplicationSegment", namespaces=namespace):
-                    app_data = {
-                        "src": app_segment.get("src"),
-                        "titleTimeBegin": app_segment.get("titleTimeBegin"),
-                        "titleTimeEnd": app_segment.get("titleTimeEnd"),
-                        "sync": app_segment.get("sync"),
-                        "zOrder": app_segment.get("zOrder"),
-                        "resources": [],
-                    }
+                        if not chapters:
+                            # Try alternative paths
+                            chapters = []
+                            for node in title.iter():
+                                if node.tag.endswith('Chapter'):
+                                    chapters.append(node)
 
-                    # Extract ApplicationResource details
-                    for resource in app_segment.findall(".//ns:ApplicationResource", namespaces=namespace):
-                        app_data["resources"].append({
-                            "src": resource.get("src"),
-                            "size": resource.get("size"),
-                            "priority": resource.get("priority"),
-                            "multiplexed": resource.get("multiplexed"),
-                        })
+                        for chapter in chapters:
+                            title_data["chapters"].append({
+                                "displayName": chapter.get("displayName", ""),
+                                "titleTimeBegin": chapter.get("titleTimeBegin", "00:00:00:00"),
+                            })
+                    except Exception as e:
+                        console.print(f"[yellow]Warning: Error extracting chapters: {e}")
 
-                    title_data["applicationSegments"].append(app_data)
+                    # Extract TrackNavigationList details with error handling
+                    try:
+                        # Audio tracks in TrackNavigationList
+                        audio_nav_tracks = []
+                        if namespace:
+                            audio_nav_tracks = title.findall(".//ns:TrackNavigationList/ns:AudioTrack", namespaces=namespace)
+                        else:
+                            audio_nav_tracks = title.findall(".//TrackNavigationList/AudioTrack")
 
-                # Add the fully extracted title data to the list
-                titles.append(title_data)
+                        if not audio_nav_tracks:
+                            # Try alternative path
+                            for node in title.iter():
+                                if node.tag.endswith('AudioTrack') and node.tag != 'Audio':
+                                    audio_nav_tracks.append(node)
+
+                        for audio_track in audio_nav_tracks:
+                            try:
+                                langcode = audio_track.get("langcode", "")
+                                # Extract the 2-letter language code before the colon or asterisk
+                                if ":" in langcode:
+                                    langcode_short = langcode.split(":")[0]
+                                elif "*" in langcode:
+                                    langcode_short = "und"  # undefined for asterisk
+                                else:
+                                    langcode_short = langcode
+
+                                # Try to convert the language code, with fallback for invalid codes
+                                try:
+                                    if langcode_short and langcode_short != "*" and langcode_short != "und":
+                                        language_name = Language.get(langcode_short).display_name()
+                                    else:
+                                        language_name = "Undefined"
+                                except Exception:
+                                    language_name = "Unknown"
+
+                                title_data["audioTracks"].append({
+                                    "track": audio_track.get("track"),
+                                    "langcode": langcode_short,
+                                    "language": language_name,
+                                    "description": audio_track.get("description", ""),
+                                    "selectable": audio_track.get("selectable", "true"),
+                                })
+                            except Exception as e:
+                                console.print(f"[yellow]Warning: Error processing audio track: {e}")
+
+                        # Subtitle tracks in TrackNavigationList
+                        subtitle_nav_tracks = []
+                        if namespace:
+                            subtitle_nav_tracks = title.findall(".//ns:TrackNavigationList/ns:SubtitleTrack", namespaces=namespace)
+                        else:
+                            subtitle_nav_tracks = title.findall(".//TrackNavigationList/SubtitleTrack")
+
+                        if not subtitle_nav_tracks:
+                            # Alternative search
+                            for node in title.iter():
+                                if node.tag.endswith('SubtitleTrack'):
+                                    subtitle_nav_tracks.append(node)
+
+                        for subtitle_track in subtitle_nav_tracks:
+                            try:
+                                langcode = subtitle_track.get("langcode", "")
+                                if ":" in langcode:
+                                    langcode_short = langcode.split(":")[0]
+                                elif "*" in langcode:
+                                    langcode_short = "und"
+                                else:
+                                    langcode_short = langcode
+
+                                try:
+                                    if langcode_short and langcode_short != "*" and langcode_short != "und":
+                                        language_name = Language.get(langcode_short).display_name()
+                                    else:
+                                        language_name = "Undefined"
+                                except Exception:
+                                    language_name = "Unknown"
+
+                                title_data["subtitleTracks"].append({
+                                    "track": subtitle_track.get("track"),
+                                    "langcode": langcode_short,
+                                    "language": language_name,
+                                    "selectable": subtitle_track.get("selectable", "true"),
+                                })
+                            except Exception as e:
+                                console.print(f"[yellow]Warning: Error processing subtitle track: {e}")
+                    except Exception as e:
+                        console.print(f"[yellow]Warning: Error extracting track navigation list: {e}")
+
+                    # Extract ApplicationSegment with error handling
+                    try:
+                        app_segments = []
+                        if namespace:
+                            app_segments = title.findall(".//ns:ApplicationSegment", namespaces=namespace)
+                        else:
+                            app_segments = title.findall(".//ApplicationSegment")
+
+                        if not app_segments:
+                            for node in title.iter():
+                                if node.tag.endswith('ApplicationSegment'):
+                                    app_segments.append(node)
+
+                        for app_segment in app_segments:
+                            app_data = {
+                                "src": app_segment.get("src", ""),
+                                "titleTimeBegin": app_segment.get("titleTimeBegin", ""),
+                                "titleTimeEnd": app_segment.get("titleTimeEnd", ""),
+                                "sync": app_segment.get("sync", ""),
+                                "zOrder": app_segment.get("zOrder", ""),
+                                "resources": [],
+                            }
+
+                            # Extract ApplicationResource details
+                            resources = []
+                            if namespace:
+                                resources = app_segment.findall(".//ns:ApplicationResource", namespaces=namespace)
+                            else:
+                                resources = app_segment.findall(".//ApplicationResource")
+
+                            if not resources:
+                                for node in app_segment.iter():
+                                    if node.tag.endswith('ApplicationResource'):
+                                        resources.append(node)
+
+                            for resource in resources:
+                                app_data["resources"].append({
+                                    "src": resource.get("src", ""),
+                                    "size": resource.get("size", ""),
+                                    "priority": resource.get("priority", ""),
+                                    "multiplexed": resource.get("multiplexed", ""),
+                                })
+
+                            title_data["applicationSegments"].append(app_data)
+                    except Exception as e:
+                        console.print(f"[yellow]Warning: Error extracting application segments: {e}")
+
+                    # Add the fully extracted title data to the list
+                    titles.append(title_data)
+
+                except Exception as e:
+                    console.print(f"[yellow]Warning: Error processing title: {e}")
+                    continue
 
         except ET.ParseError as e:
-            print(f"Error parsing XPL file: {e}")
+            console.print(f"[red]Error parsing XPL file: {e}")
+        except Exception as e:
+            console.print(f"[red]Unexpected error parsing HD DVD playlist: {e}")
+            import traceback
+            console.print(traceback.format_exc())
+
+        console.print(f"[green]Successfully parsed {len(titles)} valid titles from playlist")
         return titles
 
     def timecode_to_seconds(self, timecode):
