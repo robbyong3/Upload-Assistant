@@ -547,6 +547,372 @@ class DiscParse():
                 evo_files = selected_playlist["evoFiles"]
                 total_size = selected_playlist["totalSize"]
 
+                # Overwrite mediainfo File size and Duration
+                if evo_files:
+                    # Filter out non-existent files
+                    existing_evo_files = [evo for evo in evo_files if os.path.exists(evo)]
+
+                    if existing_evo_files:
+                        # Create a list to store MediaInfo data for each EVO file
+                        mediainfo_data = []
+
+                        # Generate MediaInfo for each EVO file
+                        for evo_file in existing_evo_files:
+                            evo_filename = os.path.basename(evo_file)
+                            console.print(f"[yellow]Generating MediaInfo for {evo_filename}...")
+
+                            # Generate MediaInfo
+                            evo_mediainfo = MediaInfo.parse(evo_file, output='STRING', full=False)
+
+                            # Add to the list
+                            mediainfo_data.append({
+                                'file': evo_filename,
+                                'path': evo_file,
+                                'mediainfo': evo_mediainfo
+                            })
+
+                        # Store the MediaInfo data in the disc object
+                        each['evo_files'] = mediainfo_data
+
+                        # Combine all MediaInfo files
+                        console.print("[yellow]Combining MediaInfo from all EVO files...")
+                        combined_mediainfo = await combine_hddvd_mediainfo(
+                            mediainfo_data,
+                            total_size,
+                            self.format_duration(selected_playlist['titleDuration'])
+                        )
+
+                        # Now modify the combined MediaInfo with additional details
+                        modified_mediainfo = combined_mediainfo
+
+                        # Split MediaInfo into blocks for easier manipulation
+                        mediainfo_blocks = modified_mediainfo.replace("\r\n", "\n").split("\n\n")
+
+                        # Add language details to the correct "Audio #X" block
+                        audio_tracks = selected_playlist.get("audioTracks", [])
+                        for audio_track in audio_tracks:
+                            # Extract track information from the playlist
+                            track_number = int(audio_track.get("track", "1"))  # Ensure track number is an integer
+                            language = audio_track.get("language", "")
+                            langcode = audio_track.get("langcode", "")
+                            description = audio_track.get("description", "")
+
+                            # Debugging: Print the current audio track information
+                            console.print(f"[Debug] Processing Audio Track: {track_number}")
+                            console.print(f"        Language: {language}")
+                            console.print(f"        Langcode: {langcode}")
+
+                            # Find the corresponding "Audio #X" block in MediaInfo
+                            found_block = False
+                            for i, block in enumerate(mediainfo_blocks):
+                                # console.print(mediainfo_blocks)
+                                if re.match(rf"^\s*Audio #\s*{track_number}\b.*", block):  # Match the correct Audio # block
+                                    found_block = True
+                                    console.print(f"[Debug] Found matching MediaInfo block for Audio Track {track_number}.")
+
+                                    # Check if Language is already present
+                                    if language and not re.search(rf"Language\s+:\s+{re.escape(language)}", block):
+                                        # Locate "Compression mode" line
+                                        compression_mode_index = block.find("Compression mode")
+                                        if compression_mode_index != -1:
+                                            # Find the end of the "Compression mode" line
+                                            line_end = block.find("\n", compression_mode_index)
+                                            if line_end == -1:
+                                                line_end = len(block)  # If no newline, append to the end of the block
+
+                                            # Construct the new Language entry
+                                            language_entry = f"\nLanguage                                 : {language}"
+
+                                            # Insert the new entry
+                                            updated_block = (
+                                                block[:line_end]  # Up to the end of the "Compression mode"
+                                                + language_entry
+                                                + block[line_end:]  # Rest of the block
+                                            )
+                                            mediainfo_blocks[i] = updated_block
+                                            console.print(f"[Debug] Updated MediaInfo Block for Audio Track {track_number}:")
+                                            console.print(updated_block)
+                                    break  # Stop processing once the correct block is modified
+
+                            # Debugging: Log if no matching block was found
+                            if not found_block:
+                                console.print(f"[Debug] No matching MediaInfo block found for Audio Track {track_number}.")
+
+                        # Add subtitle track languages to the correct "Text #X" block
+                        subtitle_tracks = selected_playlist.get("subtitleTracks", [])
+                        for subtitle_track in subtitle_tracks:
+                            track_number = int(subtitle_track.get("track", "1"))  # Ensure track number is an integer
+                            language = subtitle_track.get("language", "")
+                            langcode = subtitle_track.get("langcode", "")
+
+                            # Debugging: Print current subtitle track info
+                            console.print(f"[Debug] Processing Subtitle Track: {track_number}")
+                            console.print(f"        Language: {language}")
+                            console.print(f"        Langcode: {langcode}")
+
+                            # Find the corresponding "Text #X" block
+                            found_block = False
+                            for i, block in enumerate(mediainfo_blocks):
+                                if re.match(rf"^\s*Text #\s*{track_number}\b", block):  # Match the correct Text # block
+                                    found_block = True
+                                    console.print(f"[Debug] Found matching MediaInfo block for Subtitle Track {track_number}.")
+
+                                    # Insert Language details if not already present
+                                    if language and not re.search(rf"Language\s+:\s+{re.escape(language)}", block):
+                                        # Locate the "Format" line
+                                        format_index = block.find("Format")
+                                        if format_index != -1:
+                                            # Find the end of the "Format" line
+                                            insertion_point = block.find("\n", format_index)
+                                            if insertion_point == -1:
+                                                insertion_point = len(block)  # If no newline, append to the end of the block
+
+                                            # Construct the new Language entry
+                                            language_entry = f"\nLanguage                                 : {language}"
+
+                                            # Insert the new entry
+                                            updated_block = (
+                                                block[:insertion_point]  # Up to the end of the "Format" line
+                                                + language_entry
+                                                + block[insertion_point:]  # Rest of the block
+                                            )
+                                            mediainfo_blocks[i] = updated_block
+                                            console.print(f"[Debug] Updated MediaInfo Block for Subtitle Track {track_number}:")
+                                            console.print(updated_block)
+                                    break  # Stop processing once the correct block is modified
+
+                            # Debugging: Log if no matching block was found
+                            if not found_block:
+                                console.print(f"[Debug] No matching MediaInfo block found for Subtitle Track {track_number}.")
+
+                        chapters = selected_playlist.get("chapters", [])
+                        console.print(f"[Debug] Found {len(chapters)} chapters in the playlist.")
+                        if chapters:
+                            console.print("[yellow]Adding chapter information to MediaInfo...")
+
+                            # Find the Menu block or create a new one if it doesn't exist
+                            menu_block_index = -1
+                            for i, block in enumerate(mediainfo_blocks):
+                                if block.strip().startswith("Menu"):
+                                    menu_block_index = i
+                                    break
+
+                            # Create the Menu block content
+                            menu_content = "Menu"
+                            menu_content += "\nFormat                                   : HD DVD-Video"
+                            menu_content += "\n"  # Ensure there's a newline
+
+                            # Format and add each chapter
+                            for chapter in chapters:
+                                chapter_time = chapter.get("titleTimeBegin", "00:00:00:00")
+                                chapter_name = chapter.get("displayName", "")
+
+                                # Convert chapter time from HH:MM:SS:FF to HH:MM:SS.mmm format for MediaInfo
+                                parts = chapter_time.split(":")
+                                if len(parts) == 4:
+                                    hours, minutes, seconds, frames = map(int, parts)
+                                    # Convert frames to milliseconds (assuming 24 frames per second)
+                                    milliseconds = int((frames / 24) * 1000)
+
+                                    # Format with exactly 3 digits for milliseconds to ensure proper alignment
+                                    formatted_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+
+                                    # Create properly spaced chapter entry - exactly 42 characters before the colon
+                                    chapter_entry = formatted_time.ljust(42)
+
+                                    # Add formatted chapter entry
+                                    if chapter_name:
+                                        menu_content += f"{chapter_entry}: {chapter_name}\n"
+                                    else:
+                                        menu_content += f"{chapter_entry}: Chapter {chapters.index(chapter) + 1}\n"
+
+                            # If a Menu block was found, update it
+                            if menu_block_index != -1:
+                                mediainfo_blocks[menu_block_index] = menu_content
+                            else:
+                                # If no Menu block exists, add it to the end of the mediainfo_blocks
+                                mediainfo_blocks.append(menu_content)
+
+                            # Add more debug output to confirm chapter creation
+                            console.print(f"[Debug] Created Menu block with {len(chapters)} chapters")
+                            console.print("[Debug] First few chapter entries:")
+                            chapter_entries = menu_content.strip().split('\n')[2:5]  # Skip header lines, show first 3 chapters
+                            for entry in chapter_entries:
+                                console.print(f"[Debug]   {entry}")
+
+                        # Rejoin the modified MediaInfo blocks
+                        # Get all Audio sections in their original order
+                        audio_sections = []
+                        for i, block in enumerate(mediainfo_blocks):
+                            if block.strip().startswith("Audio"):
+                                audio_sections.append((i, block))
+
+                        # Get all Text sections in their original order
+                        text_sections = []
+                        for i, block in enumerate(mediainfo_blocks):
+                            if block.strip().startswith("Text"):
+                                text_sections.append((i, block))
+
+                        # Find Menu section
+                        menu_section = None
+                        for block in mediainfo_blocks:
+                            if block.strip().startswith("Menu"):
+                                menu_section = block
+                                break
+
+                        # Other blocks that don't fit the above categories
+                        other_blocks = []
+                        for i, block in enumerate(mediainfo_blocks):
+                            if (not block.strip().startswith("General") and
+                                    not block.strip().startswith("Video") and
+                                    not block.strip().startswith("Audio") and
+                                    not block.strip().startswith("Text") and
+                                    not block.strip().startswith("Menu")):
+                                other_blocks.append(block)
+
+                        # Define the standard MediaInfo section order
+                        standard_section_order = ["General", "Video"]
+
+                        # Build ordered MediaInfo blocks based on standard order
+                        ordered_blocks = []
+
+                        # First add sections in the standard order
+                        for section_type in standard_section_order:
+                            for block in mediainfo_blocks:
+                                if block.strip().startswith(section_type):
+                                    ordered_blocks.append(block)
+
+                        # Then add Audio sections in their original order
+                        for _, block in sorted(audio_sections, key=lambda x: x[0]):
+                            ordered_blocks.append(block)
+
+                        # Add Text sections in their original order
+                        for _, block in sorted(text_sections, key=lambda x: x[0]):
+                            ordered_blocks.append(block)
+
+                        # Add Menu section if it exists
+                        if menu_section:
+                            ordered_blocks.append(menu_section)
+
+                        # Add any other sections
+                        for block in other_blocks:
+                            ordered_blocks.append(block)
+
+                        # Replace mediainfo_blocks with the ordered blocks
+                        mediainfo_blocks = ordered_blocks
+
+                        # Rejoin the modified MediaInfo blocks
+                        modified_mediainfo = "\n\n".join(mediainfo_blocks)
+
+                        # Add a final verification
+                        menu_in_result = "Menu" in modified_mediainfo
+
+                        # Quick check of the actual content - first 100 chars of the Menu section if found
+                        if menu_in_result:
+                            menu_start = modified_mediainfo.find("Menu")
+                            menu_extract = modified_mediainfo[menu_start:menu_start+200].replace('\n', '\\n')
+                            console.print(f"[Debug] Menu section preview: {menu_extract}")
+
+                        # Update the dictionary with the modified MediaInfo and file path
+                        each['evo_mi'] = modified_mediainfo
+                        each['largest_evo'] = existing_evo_files[0]
+
+                        # Now create a JSON version of the MediaInfo
+                        try:
+                            # Parse the combined MediaInfo text back to JSON format
+                            json_mediainfo = MediaInfo.parse(existing_evo_files[0], output='JSON')
+                            json_data = json.loads(json_mediainfo)
+
+                            # Create a copy of the parsed data to modify
+                            combined_json = json_data.copy()
+
+                            # Update the general track with combined size and duration
+                            for track in combined_json.get('media', {}).get('track', []):
+                                if track.get('@type') == 'General':
+                                    # Update file size
+                                    track['FileSize'] = str(total_size)
+
+                                    # Update duration if available in the playlist
+                                    if 'titleDuration' in selected_playlist:
+                                        duration_str = self.format_duration(selected_playlist['titleDuration'])
+                                        # Convert to milliseconds for JSON format
+                                        try:
+                                            h, m, s = map(int, duration_str.split(':'))
+                                            duration_ms = ((h * 60 + m) * 60 + s) * 1000
+                                            track['Duration'] = str(duration_ms)
+                                        except ValueError:
+                                            pass
+
+                                    # Add source file information
+                                    file_list = [os.path.basename(evo['path']) for evo in mediainfo_data]
+                                    track['SourceFiles'] = ', '.join(file_list)
+                                    break
+
+                            # Add language information to audio tracks
+                            for audio_track in selected_playlist.get('audioTracks', []):
+                                track_number = int(audio_track.get('track', '1'))
+                                language = audio_track.get('language', '')
+
+                                # Find matching track in JSON
+                                for track in combined_json.get('media', {}).get('track', []):
+                                    if track.get('@type') == 'Audio' and int(track.get('StreamOrder', '0')) == track_number - 1:
+                                        if language:
+                                            track['Language'] = language
+
+                            # Add language information to subtitle tracks
+                            for subtitle_track in selected_playlist.get('subtitleTracks', []):
+                                track_number = int(subtitle_track.get('track', '1'))
+                                language = subtitle_track.get('language', '')
+
+                                # Find matching track in JSON
+                                for track in combined_json.get('media', {}).get('track', []):
+                                    if track.get('@type') == 'Text' and int(track.get('StreamOrder', '0')) == track_number - 1:
+                                        if language:
+                                            track['Language'] = language
+
+                            # Add chapter information
+                            if selected_playlist.get('chapters'):
+                                chapters_track = {
+                                    '@type': 'Menu',
+                                    'Format': 'HD DVD-Video',
+                                    'Chapters': []
+                                }
+
+                                for chapter in selected_playlist.get('chapters', []):
+                                    chapter_time = chapter.get('titleTimeBegin', '00:00:00:00')
+                                    chapter_name = chapter.get('displayName', '') or f"Chapter {selected_playlist['chapters'].index(chapter) + 1}"
+
+                                    # Convert HH:MM:SS:FF to milliseconds
+                                    parts = chapter_time.split(':')
+                                    if len(parts) == 4:
+                                        hours, minutes, seconds, frames = map(int, parts)
+                                        milliseconds = ((hours * 60 + minutes) * 60 + seconds) * 1000 + int((frames / 24) * 1000)
+
+                                        chapters_track['Chapters'].append({
+                                            'time': milliseconds,
+                                            'name': chapter_name
+                                        })
+
+                                # Add chapters track if it has entries
+                                if chapters_track['Chapters']:
+                                    combined_json['media']['track'].append(chapters_track)
+
+                            # Write JSON MediaInfo to file
+                            json_path = f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO.json"
+                            with open(json_path, 'w', encoding='utf-8') as json_file:
+                                json.dump(combined_json, json_file, indent=2)
+
+                            console.print(f"[green]MediaInfo JSON exported to {json_path}")
+
+                        except Exception as e:
+                            console.print(f"[red]Error creating JSON MediaInfo: {str(e)}")
+
+                    else:
+                        console.print("[bold red]No valid EVO files found in the playlist.")
+
+                # Save playlist information in meta under HDDVD_PLAYLIST
+                meta["HDDVD_PLAYLIST"] = selected_playlist
+
             except (FileNotFoundError, ValueError, ET.ParseError) as e:
                 console.print(f"Playlist processing failed: {e}. Falling back to largest EVO file detection.")
 
@@ -557,380 +923,18 @@ class DiscParse():
                     continue
 
                 size = 0
-                evo_files = files[0]
+                largest = files[0]
 
                 # Get largest file from files
                 for file in files:
                     file_size = os.path.getsize(file)
                     if file_size > size:
-                        evo_files = file
+                        largest = file
                         size = file_size
 
-            # Overwrite mediainfo File size and Duration
-            if evo_files:
-                # Filter out non-existent files
-                existing_evo_files = [evo for evo in evo_files if os.path.exists(evo)]
-
-                if existing_evo_files:
-                    # Create a list to store MediaInfo data for each EVO file
-                    mediainfo_data = []
-
-                    # Generate MediaInfo for each EVO file
-                    for evo_file in existing_evo_files:
-                        evo_filename = os.path.basename(evo_file)
-                        console.print(f"[yellow]Generating MediaInfo for {evo_filename}...")
-
-                        # Generate MediaInfo
-                        evo_mediainfo = MediaInfo.parse(evo_file, output='STRING', full=False)
-
-                        # Add to the list
-                        mediainfo_data.append({
-                            'file': evo_filename,
-                            'path': evo_file,
-                            'mediainfo': evo_mediainfo
-                        })
-
-                    # Store the MediaInfo data in the disc object
-                    each['evo_files'] = mediainfo_data
-
-                    # Combine all MediaInfo files
-                    console.print("[yellow]Combining MediaInfo from all EVO files...")
-                    combined_mediainfo = await combine_hddvd_mediainfo(
-                        mediainfo_data,
-                        total_size,
-                        self.format_duration(selected_playlist['titleDuration'])
-                    )
-
-                    # Now modify the combined MediaInfo with additional details
-                    modified_mediainfo = combined_mediainfo
-
-                    # Split MediaInfo into blocks for easier manipulation
-                    mediainfo_blocks = modified_mediainfo.replace("\r\n", "\n").split("\n\n")
-
-                    # Add language details to the correct "Audio #X" block
-                    audio_tracks = selected_playlist.get("audioTracks", [])
-                    for audio_track in audio_tracks:
-                        # Extract track information from the playlist
-                        track_number = int(audio_track.get("track", "1"))  # Ensure track number is an integer
-                        language = audio_track.get("language", "")
-                        langcode = audio_track.get("langcode", "")
-                        description = audio_track.get("description", "")
-
-                        # Debugging: Print the current audio track information
-                        console.print(f"[Debug] Processing Audio Track: {track_number}")
-                        console.print(f"        Language: {language}")
-                        console.print(f"        Langcode: {langcode}")
-
-                        # Find the corresponding "Audio #X" block in MediaInfo
-                        found_block = False
-                        for i, block in enumerate(mediainfo_blocks):
-                            # console.print(mediainfo_blocks)
-                            if re.match(rf"^\s*Audio #\s*{track_number}\b.*", block):  # Match the correct Audio # block
-                                found_block = True
-                                console.print(f"[Debug] Found matching MediaInfo block for Audio Track {track_number}.")
-
-                                # Check if Language is already present
-                                if language and not re.search(rf"Language\s+:\s+{re.escape(language)}", block):
-                                    # Locate "Compression mode" line
-                                    compression_mode_index = block.find("Compression mode")
-                                    if compression_mode_index != -1:
-                                        # Find the end of the "Compression mode" line
-                                        line_end = block.find("\n", compression_mode_index)
-                                        if line_end == -1:
-                                            line_end = len(block)  # If no newline, append to the end of the block
-
-                                        # Construct the new Language entry
-                                        language_entry = f"\nLanguage                                 : {language}"
-
-                                        # Insert the new entry
-                                        updated_block = (
-                                            block[:line_end]  # Up to the end of the "Compression mode"
-                                            + language_entry
-                                            + block[line_end:]  # Rest of the block
-                                        )
-                                        mediainfo_blocks[i] = updated_block
-                                        console.print(f"[Debug] Updated MediaInfo Block for Audio Track {track_number}:")
-                                        console.print(updated_block)
-                                break  # Stop processing once the correct block is modified
-
-                        # Debugging: Log if no matching block was found
-                        if not found_block:
-                            console.print(f"[Debug] No matching MediaInfo block found for Audio Track {track_number}.")
-
-                    # Add subtitle track languages to the correct "Text #X" block
-                    subtitle_tracks = selected_playlist.get("subtitleTracks", [])
-                    for subtitle_track in subtitle_tracks:
-                        track_number = int(subtitle_track.get("track", "1"))  # Ensure track number is an integer
-                        language = subtitle_track.get("language", "")
-                        langcode = subtitle_track.get("langcode", "")
-
-                        # Debugging: Print current subtitle track info
-                        console.print(f"[Debug] Processing Subtitle Track: {track_number}")
-                        console.print(f"        Language: {language}")
-                        console.print(f"        Langcode: {langcode}")
-
-                        # Find the corresponding "Text #X" block
-                        found_block = False
-                        for i, block in enumerate(mediainfo_blocks):
-                            if re.match(rf"^\s*Text #\s*{track_number}\b", block):  # Match the correct Text # block
-                                found_block = True
-                                console.print(f"[Debug] Found matching MediaInfo block for Subtitle Track {track_number}.")
-
-                                # Insert Language details if not already present
-                                if language and not re.search(rf"Language\s+:\s+{re.escape(language)}", block):
-                                    # Locate the "Format" line
-                                    format_index = block.find("Format")
-                                    if format_index != -1:
-                                        # Find the end of the "Format" line
-                                        insertion_point = block.find("\n", format_index)
-                                        if insertion_point == -1:
-                                            insertion_point = len(block)  # If no newline, append to the end of the block
-
-                                        # Construct the new Language entry
-                                        language_entry = f"\nLanguage                                 : {language}"
-
-                                        # Insert the new entry
-                                        updated_block = (
-                                            block[:insertion_point]  # Up to the end of the "Format" line
-                                            + language_entry
-                                            + block[insertion_point:]  # Rest of the block
-                                        )
-                                        mediainfo_blocks[i] = updated_block
-                                        console.print(f"[Debug] Updated MediaInfo Block for Subtitle Track {track_number}:")
-                                        console.print(updated_block)
-                                break  # Stop processing once the correct block is modified
-
-                        # Debugging: Log if no matching block was found
-                        if not found_block:
-                            console.print(f"[Debug] No matching MediaInfo block found for Subtitle Track {track_number}.")
-
-                    chapters = selected_playlist.get("chapters", [])
-                    console.print(f"[Debug] Found {len(chapters)} chapters in the playlist.")
-                    if chapters:
-                        console.print("[yellow]Adding chapter information to MediaInfo...")
-
-                        # Find the Menu block or create a new one if it doesn't exist
-                        menu_block_index = -1
-                        for i, block in enumerate(mediainfo_blocks):
-                            if block.strip().startswith("Menu"):
-                                menu_block_index = i
-                                break
-
-                        # Create the Menu block content
-                        menu_content = "Menu"
-                        menu_content += "\nFormat                                   : HD DVD-Video"
-                        menu_content += "\n"  # Ensure there's a newline
-
-                        # Format and add each chapter
-                        for chapter in chapters:
-                            chapter_time = chapter.get("titleTimeBegin", "00:00:00:00")
-                            chapter_name = chapter.get("displayName", "")
-
-                            # Convert chapter time from HH:MM:SS:FF to HH:MM:SS.mmm format for MediaInfo
-                            parts = chapter_time.split(":")
-                            if len(parts) == 4:
-                                hours, minutes, seconds, frames = map(int, parts)
-                                # Convert frames to milliseconds (assuming 24 frames per second)
-                                milliseconds = int((frames / 24) * 1000)
-
-                                # Format with exactly 3 digits for milliseconds to ensure proper alignment
-                                formatted_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
-
-                                # Create properly spaced chapter entry - exactly 42 characters before the colon
-                                chapter_entry = formatted_time.ljust(42)
-
-                                # Add formatted chapter entry
-                                if chapter_name:
-                                    menu_content += f"{chapter_entry}: {chapter_name}\n"
-                                else:
-                                    menu_content += f"{chapter_entry}: Chapter {chapters.index(chapter) + 1}\n"
-
-                        # If a Menu block was found, update it
-                        if menu_block_index != -1:
-                            mediainfo_blocks[menu_block_index] = menu_content
-                        else:
-                            # If no Menu block exists, add it to the end of the mediainfo_blocks
-                            mediainfo_blocks.append(menu_content)
-
-                        # Add more debug output to confirm chapter creation
-                        console.print(f"[Debug] Created Menu block with {len(chapters)} chapters")
-                        console.print("[Debug] First few chapter entries:")
-                        chapter_entries = menu_content.strip().split('\n')[2:5]  # Skip header lines, show first 3 chapters
-                        for entry in chapter_entries:
-                            console.print(f"[Debug]   {entry}")
-
-                    # Rejoin the modified MediaInfo blocks
-                    # Get all Audio sections in their original order
-                    audio_sections = []
-                    for i, block in enumerate(mediainfo_blocks):
-                        if block.strip().startswith("Audio"):
-                            audio_sections.append((i, block))
-
-                    # Get all Text sections in their original order
-                    text_sections = []
-                    for i, block in enumerate(mediainfo_blocks):
-                        if block.strip().startswith("Text"):
-                            text_sections.append((i, block))
-
-                    # Find Menu section
-                    menu_section = None
-                    for block in mediainfo_blocks:
-                        if block.strip().startswith("Menu"):
-                            menu_section = block
-                            break
-
-                    # Other blocks that don't fit the above categories
-                    other_blocks = []
-                    for i, block in enumerate(mediainfo_blocks):
-                        if (not block.strip().startswith("General") and
-                                not block.strip().startswith("Video") and
-                                not block.strip().startswith("Audio") and
-                                not block.strip().startswith("Text") and
-                                not block.strip().startswith("Menu")):
-                            other_blocks.append(block)
-
-                    # Define the standard MediaInfo section order
-                    standard_section_order = ["General", "Video"]
-
-                    # Build ordered MediaInfo blocks based on standard order
-                    ordered_blocks = []
-
-                    # First add sections in the standard order
-                    for section_type in standard_section_order:
-                        for block in mediainfo_blocks:
-                            if block.strip().startswith(section_type):
-                                ordered_blocks.append(block)
-
-                    # Then add Audio sections in their original order
-                    for _, block in sorted(audio_sections, key=lambda x: x[0]):
-                        ordered_blocks.append(block)
-
-                    # Add Text sections in their original order
-                    for _, block in sorted(text_sections, key=lambda x: x[0]):
-                        ordered_blocks.append(block)
-
-                    # Add Menu section if it exists
-                    if menu_section:
-                        ordered_blocks.append(menu_section)
-
-                    # Add any other sections
-                    for block in other_blocks:
-                        ordered_blocks.append(block)
-
-                    # Replace mediainfo_blocks with the ordered blocks
-                    mediainfo_blocks = ordered_blocks
-
-                    # Rejoin the modified MediaInfo blocks
-                    modified_mediainfo = "\n\n".join(mediainfo_blocks)
-
-                    # Add a final verification
-                    menu_in_result = "Menu" in modified_mediainfo
-
-                    # Quick check of the actual content - first 100 chars of the Menu section if found
-                    if menu_in_result:
-                        menu_start = modified_mediainfo.find("Menu")
-                        menu_extract = modified_mediainfo[menu_start:menu_start+200].replace('\n', '\\n')
-                        console.print(f"[Debug] Menu section preview: {menu_extract}")
-
-                    # Update the dictionary with the modified MediaInfo and file path
-                    each['evo_mi'] = modified_mediainfo
-                    each['largest_evo'] = existing_evo_files[0]
-
-                    # Now create a JSON version of the MediaInfo
-                    try:
-                        # Parse the combined MediaInfo text back to JSON format
-                        json_mediainfo = MediaInfo.parse(existing_evo_files[0], output='JSON')
-                        json_data = json.loads(json_mediainfo)
-
-                        # Create a copy of the parsed data to modify
-                        combined_json = json_data.copy()
-
-                        # Update the general track with combined size and duration
-                        for track in combined_json.get('media', {}).get('track', []):
-                            if track.get('@type') == 'General':
-                                # Update file size
-                                track['FileSize'] = str(total_size)
-
-                                # Update duration if available in the playlist
-                                if 'titleDuration' in selected_playlist:
-                                    duration_str = self.format_duration(selected_playlist['titleDuration'])
-                                    # Convert to milliseconds for JSON format
-                                    try:
-                                        h, m, s = map(int, duration_str.split(':'))
-                                        duration_ms = ((h * 60 + m) * 60 + s) * 1000
-                                        track['Duration'] = str(duration_ms)
-                                    except ValueError:
-                                        pass
-
-                                # Add source file information
-                                file_list = [os.path.basename(evo['path']) for evo in mediainfo_data]
-                                track['SourceFiles'] = ', '.join(file_list)
-                                break
-
-                        # Add language information to audio tracks
-                        for audio_track in selected_playlist.get('audioTracks', []):
-                            track_number = int(audio_track.get('track', '1'))
-                            language = audio_track.get('language', '')
-
-                            # Find matching track in JSON
-                            for track in combined_json.get('media', {}).get('track', []):
-                                if track.get('@type') == 'Audio' and int(track.get('StreamOrder', '0')) == track_number - 1:
-                                    if language:
-                                        track['Language'] = language
-
-                        # Add language information to subtitle tracks
-                        for subtitle_track in selected_playlist.get('subtitleTracks', []):
-                            track_number = int(subtitle_track.get('track', '1'))
-                            language = subtitle_track.get('language', '')
-
-                            # Find matching track in JSON
-                            for track in combined_json.get('media', {}).get('track', []):
-                                if track.get('@type') == 'Text' and int(track.get('StreamOrder', '0')) == track_number - 1:
-                                    if language:
-                                        track['Language'] = language
-
-                        # Add chapter information
-                        if selected_playlist.get('chapters'):
-                            chapters_track = {
-                                '@type': 'Menu',
-                                'Format': 'HD DVD-Video',
-                                'Chapters': []
-                            }
-
-                            for chapter in selected_playlist.get('chapters', []):
-                                chapter_time = chapter.get('titleTimeBegin', '00:00:00:00')
-                                chapter_name = chapter.get('displayName', '') or f"Chapter {selected_playlist['chapters'].index(chapter) + 1}"
-
-                                # Convert HH:MM:SS:FF to milliseconds
-                                parts = chapter_time.split(':')
-                                if len(parts) == 4:
-                                    hours, minutes, seconds, frames = map(int, parts)
-                                    milliseconds = ((hours * 60 + minutes) * 60 + seconds) * 1000 + int((frames / 24) * 1000)
-
-                                    chapters_track['Chapters'].append({
-                                        'time': milliseconds,
-                                        'name': chapter_name
-                                    })
-
-                            # Add chapters track if it has entries
-                            if chapters_track['Chapters']:
-                                combined_json['media']['track'].append(chapters_track)
-
-                        # Write JSON MediaInfo to file
-                        json_path = f"{meta['base_dir']}/tmp/{meta['uuid']}/MEDIAINFO.json"
-                        with open(json_path, 'w', encoding='utf-8') as json_file:
-                            json.dump(combined_json, json_file, indent=2)
-
-                        console.print(f"[green]MediaInfo JSON exported to {json_path}")
-
-                    except Exception as e:
-                        console.print(f"[red]Error creating JSON MediaInfo: {str(e)}")
-
-                else:
-                    console.print("[bold red]No valid EVO files found in the playlist.")
-
-            # Save playlist information in meta under HDDVD_PLAYLIST
-            meta["HDDVD_PLAYLIST"] = selected_playlist
+                # Generate MediaInfo for the largest EVO file
+                each['evo_mi'] = MediaInfo.parse(os.path.basename(largest), output='STRING', full=False)
+                each['largest_evo'] = os.path.abspath(f"{path}/{largest}")
 
         return discs
 
