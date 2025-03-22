@@ -597,24 +597,24 @@ class DiscParse():
                         mediainfo_blocks = modified_mediainfo.replace("\r\n", "\n").split("\n\n")
 
                         # Add language details to the correct "Audio #X" block
-                        audio_tracks = selected_playlist.get("audioTracks", [])
-                        for audio_track in audio_tracks:
-                            # Extract track information from the playlist
-                            track_number = int(audio_track.get("track", "1"))  # Ensure track number is an integer
-                            language = audio_track.get("language", "")
-                            langcode = audio_track.get("langcode", "")
-                            description = audio_track.get("description", "")
+                        for audio_track in selected_playlist.get('audioTracks', []):
+                            track_number = int(audio_track.get('track', '1'))
+                            language = audio_track.get('language', '')
+                            langcode = audio_track.get('langcode', '')
+                            description = audio_track.get('description', '')
 
                             # Debugging: Print the current audio track information
                             console.print(f"[Debug] Processing Audio Track: {track_number}")
                             console.print(f"        Language: {language}")
                             console.print(f"        Langcode: {langcode}")
 
-                            # Find the corresponding "Audio #X" block in MediaInfo
+                            # Find the corresponding audio block in MediaInfo
                             found_block = False
                             for i, block in enumerate(mediainfo_blocks):
-                                # console.print(mediainfo_blocks)
-                                if re.match(rf"^\s*Audio #\s*{track_number}\b.*", block):  # Match the correct Audio # block
+                                # Check for both "Audio #X" format and plain "Audio" (when there's only one track)
+                                if (re.match(rf"^\s*Audio #\s*{track_number}\b.*", block) or
+                                        (track_number == 1 and block.strip().startswith("Audio") and not block.strip().startswith("Audio #"))):
+
                                     found_block = True
                                     console.print(f"[Debug] Found matching MediaInfo block for Audio Track {track_number}.")
 
@@ -647,8 +647,7 @@ class DiscParse():
                                 console.print(f"[Debug] No matching MediaInfo block found for Audio Track {track_number}.")
 
                         # Add subtitle track languages to the correct "Text #X" block
-                        subtitle_tracks = selected_playlist.get("subtitleTracks", [])
-                        for subtitle_track in subtitle_tracks:
+                        for subtitle_track in selected_playlist.get("subtitleTracks", []):
                             track_number = int(subtitle_track.get("track", "1"))  # Ensure track number is an integer
                             language = subtitle_track.get("language", "")
                             langcode = subtitle_track.get("langcode", "")
@@ -658,10 +657,13 @@ class DiscParse():
                             console.print(f"        Language: {language}")
                             console.print(f"        Langcode: {langcode}")
 
-                            # Find the corresponding "Text #X" block
+                            # Find the corresponding Text block in MediaInfo
                             found_block = False
                             for i, block in enumerate(mediainfo_blocks):
-                                if re.match(rf"^\s*Text #\s*{track_number}\b", block):  # Match the correct Text # block
+                                # Check for both "Text #X" format and plain "Text" (when there's only one track)
+                                if (re.match(rf"^\s*Text #\s*{track_number}\b", block) or
+                                        (track_number == 1 and block.strip().startswith("Text") and not block.strip().startswith("Text #"))):
+
                                     found_block = True
                                     console.print(f"[Debug] Found matching MediaInfo block for Subtitle Track {track_number}.")
 
@@ -863,9 +865,14 @@ class DiscParse():
 
                                 # Find matching track in JSON
                                 for track in combined_json.get('media', {}).get('track', []):
-                                    if track.get('@type') == 'Audio' and int(track.get('StreamOrder', '0')) == track_number - 1:
-                                        if language:
-                                            track['Language'] = language
+                                    if track.get('@type') == 'Audio':
+                                        # For the first audio track, StreamOrder might be missing or "0"
+                                        track_stream_order = track.get('StreamOrder')
+                                        if (track_stream_order is None and track_number == 1) or \
+                                                (track_stream_order is not None and int(track_stream_order) == track_number - 1):
+                                            if language:
+                                                track['Language'] = language
+                                            break
 
                             # Add language information to subtitle tracks
                             for subtitle_track in selected_playlist.get('subtitleTracks', []):
